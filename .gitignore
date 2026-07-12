@@ -1,0 +1,13 @@
+/Backups/
+/.agents/
+/build/
+/.deps/
+/Builds/
+/.vs/
+/.idea/
+/cmake-build-*/
+*.user
+*.suo
+*.VC.db
+*.opendb
+*.vst3

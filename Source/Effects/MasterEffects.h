@@ -1,0 +1,33 @@
+#pragma once
+
+#include <JuceHeader.h>
+
+namespace chrome
+{
+struct MasterControls
+{
+    float chorus, delay, reverb, compressor, width, lowEq, highEq, gain;
+    bool softClip;
+    int oversampling;
+};
+
+class MasterEffects final
+{
+public:
+    void prepare (double sampleRate, int maxBlockSize);
+    void reset();
+    void process (juce::AudioBuffer<float>&, const MasterControls&);
+
+private:
+    juce::dsp::Chorus<float> chorus;
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delay { 192000 };
+    juce::dsp::Reverb reverb;
+    juce::dsp::Compressor<float> compressor;
+    juce::dsp::Limiter<float> limiter;
+    juce::dsp::Oversampling<float> oversampling2x { 2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, true };
+    juce::dsp::Oversampling<float> oversampling4x { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, true };
+    std::array<juce::dsp::IIR::Filter<float>, 2> lowShelf, highShelf;
+    juce::AudioBuffer<float> wetBuffer;
+    double rate = 44100.0;
+};
+}
