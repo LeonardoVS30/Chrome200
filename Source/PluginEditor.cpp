@@ -609,11 +609,10 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 {
                     auto r = designRect (*this, slotX[static_cast<size_t> (slot)] + 23.0f * xs,
                                           624.0f, 140.0f * xs, 27.0f);
-                    const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "start"));
-                    const auto mask = sampleSkin (r.getCentre().toInt());
-                    g.setColour (mask);
-                    g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
-                    g.setColour (juce::Colour (0xff292b2e));
+                     const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "start"));
+                     g.setColour (juce::Colour (0xff797b7b));
+                     g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
+                     g.setColour (juce::Colour (0xff292b2e));
                     g.setFont (juce::FontOptions (21.5f * sy));
                     g.drawFittedText (juce::String (v * 100.0, 2) + " %", r.getSmallestIntegerContainer(), juce::Justification::centred, 1);
                 }
@@ -621,11 +620,10 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 {
                     auto r = designRect (*this, slotX[static_cast<size_t> (slot)] + 193.0f * xs,
                                           624.0f, 140.0f * xs, 27.0f);
-                    const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "end"));
-                    const auto mask = sampleSkin (r.getCentre().toInt());
-                    g.setColour (mask);
-                    g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
-                    g.setColour (juce::Colour (0xff292b2e));
+                     const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "end"));
+                     g.setColour (juce::Colour (0xff797b7b));
+                     g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
+                     g.setColour (juce::Colour (0xff292b2e));
                     g.setFont (juce::FontOptions (21.5f * sy));
                     g.drawFittedText (juce::String (v * 100.0, 2) + " %", r.getSmallestIntegerContainer(), juce::Justification::centred, 1);
                 }
@@ -653,7 +651,7 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
             const std::array<juce::String, 3> labels { "WAVE", "SPECTRUM", "MOD" };
             for (int i = 0; i < 3; ++i)
             {
-                g.setColour (sampleSkin (tabRects[static_cast<size_t> (i)].getCentre()));
+                g.setColour (juce::Colour (0xff4e4f53));
                 g.fillRoundedRectangle (tabRects[static_cast<size_t> (i)].toFloat(), 8.0f * juce::jmin (sx, sy));
                 if (tabs[static_cast<size_t> (i)]->getToggleState())
                 {
@@ -671,21 +669,25 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
             }
         }
 
-        // X-FADE thumb (live) over baked track.
+        // X-FADE: mask the baked static pill and redraw it at the live morph_x position.
         {
             const auto track = designRect (*this, 730.0f, 1585.0f, 1430.0f, 46.0f);
+            // Mask the baked pill location.
+            g.setColour (juce::Colour (0xff434547));
+            g.fillRoundedRectangle (designRect (*this, 1345.0f, 1619.0f, 84.0f, 15.0f), 7.0f * juce::jmin (sx, sy));
             const auto v = chrome::params::load (processor.parameters, "morph_x");
-            const int tx = static_cast<int> (track.getX() + track.getWidth() * v);
-            g.setColour (juce::Colour (0xfff7f8fa));
-            g.fillEllipse (static_cast<float> (tx - 8), track.getCentreY() - 14.0f, 16.0f, 28.0f);
-            g.setColour (juce::Colour (0xff91b8f4));
-            g.drawEllipse (static_cast<float> (tx - 8), track.getCentreY() - 14.0f, 16.0f, 28.0f, 1.5f);
+            const float pw = 84.0f * juce::jmin (sx, sy);
+            const float ph = 15.0f * juce::jmin (sx, sy);
+            const float px = track.getX() + track.getWidth() * v - pw * 0.5f;
+            const float py = designRect (*this, 0.0f, 1619.0f, 1.0f, 15.0f).getY();
+            g.setColour (juce::Colour (0xff9ba6b9));
+            g.fillRoundedRectangle (px, py, pw, ph, 7.0f * juce::jmin (sx, sy));
         }
 
         // Live ADSR graph overlay (mask baked, draw from amp params).
         {
             const auto gArea = designRect (*this, 116.0f, 1023.0f, 772.0f, 158.0f);
-            g.setColour (sampleSkin (gArea.getCentre().toInt()));
+            g.setColour (juce::Colour (0xff3c3e45));
             g.fillRoundedRectangle (gArea, 14.0f * juce::jmin (sx, sy));
             auto eg = gArea.reduced (static_cast<int> (10.0f * juce::jmin (sx, sy)));
             const auto a = chrome::params::load (processor.parameters, "amp_attack");
@@ -711,7 +713,7 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
         // Live LFO graph overlay (mask baked, draw from lfo1_shape).
         {
             const auto lArea = designRect (*this, 1535.0f, 1024.0f, 774.0f, 158.0f);
-            g.setColour (sampleSkin (lArea.getCentre().toInt()));
+            g.setColour (juce::Colour (0xff56575f));
             g.fillRoundedRectangle (lArea, 9.0f * juce::jmin (sx, sy));
             const auto shape = static_cast<int> (chrome::params::load (processor.parameters, "lfo1_shape"));
             auto b = lArea.reduced (static_cast<int> (4.0f * juce::jmin (sx, sy)));
@@ -752,10 +754,25 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 }
         }
 
+        // Dynamic combo readouts in MODULATION (mask baked text, draw selection).
+        {
+            const auto combos = std::array<std::pair<juce::ComboBox*, juce::Rectangle<int>>, 3> {
+                std::make_pair (&modulationSource, designRect (*this, 1535.0f, 846.0f, 172.0f, 49.0f).getSmallestIntegerContainer()),
+                std::make_pair (&lfoShape, designRect (*this, 1535.0f, 901.0f, 172.0f, 68.0f).getSmallestIntegerContainer()),
+                std::make_pair (&modulationDestination, designRect (*this, 2164.0f, 896.0f, 165.0f, 54.0f).getSmallestIntegerContainer()) };
+            for (auto& [combo, rect] : combos)
+            {
+                g.setColour (juce::Colour (0xffb4b1b1));
+                g.fillRoundedRectangle (rect.toFloat().reduced (2.0f), 4.0f * juce::jmin (sx, sy));
+                g.setColour (juce::Colour (0xff292b2e));
+                g.setFont (juce::FontOptions (15.0f * sy, juce::Font::bold));
+                g.drawFittedText (combo->getText(), rect.reduced (6, 2), juce::Justification::centredLeft, 1);
+            }
+        }
         // Dynamic preset name (mask baked "Init Patch", draw current).
         {
             const auto r = designRect (*this, 1024.0f, 85.0f, 360.0f, 53.0f);
-            g.setColour (sampleSkin (r.getCentre().toInt()));
+            g.setColour (juce::Colour (0xffefefec));
             g.fillRoundedRectangle (r.toFloat(), 4.0f * juce::jmin (sx, sy));
             g.setColour (juce::Colour (0xff292b2e));
             g.setFont (juce::FontOptions (16.0f * sy, juce::Font::bold));
@@ -771,9 +788,16 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
 
         // Live output meter, aligned to the vector frame.
         const auto meterArea = designRect (*this, 2234, 1328, 70, 154);
-        // Mask the baked-in meter so only the live one shows (no duplication).
-        g.setColour (sampleSkin (meterArea.getCentre().toInt()));
-        g.fillRoundedRectangle (meterArea, 4.0f * juce::jmin (sx, sy));
+        // Mask only the segment cells (keep the baked frame).
+        g.setColour (juce::Colour (0xff3d4045));
+        for (int channel = 0; channel < 2; ++channel)
+            for (int segment = 0; segment < 15; ++segment)
+            {
+                const auto segmentHeight = meterArea.getHeight() / 17.0f;
+                const auto y = meterArea.getBottom() - (static_cast<float> (segment) + 1.0f) * (segmentHeight + sy);
+                g.fillRect (meterArea.getX() + static_cast<float> (channel) * 22.0f * sx,
+                            y, 15.0f * sx, segmentHeight);
+            }
         const auto level = juce::jlimit (0.0f, 1.0f, displayedPeak);
         for (int channel = 0; channel < 2; ++channel)
             for (int segment = 0; segment < 15; ++segment)
@@ -797,7 +821,7 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 const int th = 16;
                 auto textRect = juce::Rectangle<int> (b.getCentreX() - tw / 2, b.getBottom() + 2, tw, th);
                 if (textRect.getBottom() > getHeight()) textRect = textRect.translated (0, -th - b.getHeight() - 4);
-                const auto mask = sampleSkin (textRect.getCentre());
+                const auto mask = sampleSkin (juce::Point<int> (textRect.getRight() + 4, textRect.getBottom() + 4));
                 g.setColour (mask);
                 g.fillRoundedRectangle (textRect.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
                 g.setColour (juce::Colour (0xff292b2e));
@@ -988,16 +1012,16 @@ void Chrome2000AudioProcessorEditor::resized()
     modulationDestination.setBounds (designBounds (*this, 2164, 896, 165, 54));
     modulationKnobs[0]->setBounds (designBounds (*this, 1795.0f, 860.0f, 103.3594f, 103.3594f));
     modulationKnobs[1]->setBounds (designBounds (*this, 1971.0f, 860.0f, 103.3594f, 103.3594f));
-    modulationKnobs[2]->setBounds (designBounds (*this, 1795.0f, 975.0f, 80.0f, 80.0f));
-    modulationKnobs[3]->setBounds (designBounds (*this, 1890.0f, 975.0f, 80.0f, 80.0f));
-    modulationKnobs[4]->setBounds (designBounds (*this, 1795.0f, 1070.0f, 80.0f, 80.0f));
-    modulationKnobs[5]->setBounds (designBounds (*this, 1890.0f, 1070.0f, 80.0f, 80.0f));
+    modulationKnobs[2]->setBounds (designBounds (*this, 1665.0f, 982.0f, 34.0f, 34.0f));
+    modulationKnobs[3]->setBounds (designBounds (*this, 1702.0f, 982.0f, 34.0f, 34.0f));
+    modulationKnobs[4]->setBounds (designBounds (*this, 1835.0f, 982.0f, 34.0f, 34.0f));
+    modulationKnobs[5]->setBounds (designBounds (*this, 1872.0f, 982.0f, 34.0f, 34.0f));
 
-    lfo2Shape.setBounds (designBounds (*this, 1535.0f, 975.0f, 172.0f, 49.0f));
-    lfo3Shape.setBounds (designBounds (*this, 1535.0f, 1070.0f, 172.0f, 49.0f));
+    lfo2Shape.setBounds (designBounds (*this, 1535.0f, 978.0f, 120.0f, 32.0f));
+    lfo3Shape.setBounds (designBounds (*this, 1740.0f, 978.0f, 120.0f, 32.0f));
 
-    filterKnobs[3]->setBounds (designBounds (*this, 2082.0f, 400.0f, 90.0f, 90.0f));
-    filterKnobs[4]->setBounds (designBounds (*this, 2190.0f, 400.0f, 90.0f, 90.0f));
+    filterKnobs[3]->setBounds (designBounds (*this, 1975.0f, 300.0f, 80.0f, 80.0f));
+    filterKnobs[4]->setBounds (designBounds (*this, 2260.0f, 300.0f, 80.0f, 80.0f));
     lfoDisplay.setBounds (designBounds (*this, 1535, 1024, 774, 158));
 
     const std::array<float, 7> effectX { 225.0f, 566.0f, 755.0f, 943.0f, 1203.0f, 1392.0f, 1580.0f };

@@ -93,7 +93,7 @@ void SampleSlotComponent::paint (juce::Graphics& g)
             if (active)
             {
                 g.setColour (juce::Colour (0x405f91e8));
-                g.fillRoundedRectangle (bounds.expanded (3.0f * scale), radius * scale);
+                g.fillRoundedRectangle (bounds, radius * scale);
             }
             juce::ColourGradient fill (active ? juce::Colour (0xffe2e5ea) : juce::Colour (0xffd1d1cf),
                                        bounds.getX(), bounds.getY(),
