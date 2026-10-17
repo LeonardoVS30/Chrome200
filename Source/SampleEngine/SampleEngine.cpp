@@ -35,6 +35,7 @@ void SampleEngine::prepare (double sampleRate, int maxBlockSize)
 {
     rate = sampleRate;
     for (auto& buffer : slotBuffers) buffer.setSize (2, maxBlockSize, false, true, true);
+    for (auto& buffer : modeDryBuffers) buffer.setSize (2, maxBlockSize, false, true, true);
     for (auto& voice : voices) voice.prepare (sampleRate);
     for (int slot = 0; slot < 3; ++slot)
     {
@@ -42,6 +43,8 @@ void SampleEngine::prepare (double sampleRate, int maxBlockSize)
         chrome[static_cast<size_t> (slot)].prepare (sampleRate, maxBlockSize);
         digital[static_cast<size_t> (slot)].prepare (sampleRate, maxBlockSize);
     }
+    filterEnvelope.setSampleRate (sampleRate);
+    modEnvelope.setSampleRate (sampleRate);
     juce::dsp::ProcessSpec mono { sampleRate, static_cast<juce::uint32> (maxBlockSize), 1 };
     for (auto& stage : filterStages) for (auto& channel : stage) channel.prepare (mono);
     master.prepare (sampleRate, maxBlockSize);
@@ -56,6 +59,25 @@ void SampleEngine::reset()
     for (auto& p : digital) p.reset();
     for (auto& stage : filterStages) for (auto& channel : stage) channel.reset();
     master.reset();
+    filterEnvelope.reset();
+    modEnvelope.reset();
+    lastFilterNote = 60;
+    previousNote = -1;
+    sampleCounter = 0;
+    lfoPhase.fill (0.0);
+    lfoNoteOnTime.fill (0);
+    aftertouch = 0.0f;
+    lastVelocity = 0.0f;
+    modulationRandom = 0xa19f2000u;
+    randomModulation = 0.0f;
+    lastModes.fill (-1);
+    modeFadeSamples.fill (0);
+    for (auto& buffer : modeDryBuffers) buffer.clear();
+    {
+        const juce::ScopedLock lock (metadataLock);
+        paths.fill ({});
+        errors.fill ({});
+    }
 }
 
 void SampleEngine::loadSample (int slot, const juce::File& file)
@@ -103,7 +125,9 @@ std::array<SlotPlayback, 3> SampleEngine::makeSlotSettings (const ModulationValu
         s.gain = juce::Decibels::decibelsToGain (read (p.gain)); s.pan = read (p.pan);
         s.start = juce::jlimit (0.0f, 0.99f, read (p.start) + modulation.position * 0.2f);
         s.end = juce::jlimit (0.01f, 1.0f, read (p.end) + modulation.position * 0.2f);
-        s.tune = read (p.tune) + read (p.fine) * 0.01f + modulation.pitch * 12.0f;
+        s.tune = read (p.tune) + read (p.fine) * 0.01f
+               + params::load (state, "global_pitch") + params::load (state, "global_fine") * 0.01f
+               + modulation.pitch * 12.0f;
         s.loop = read (p.loop) > 0.5f; s.reverse = read (p.reverse) > 0.5f;
         const auto solo = read (p.solo) > 0.5f;
         s.audible = read (p.enabled) > 0.5f && read (p.mute) < 0.5f && (! anySolo || solo);
@@ -117,16 +141,28 @@ SampleEngine::ModulationValues SampleEngine::evaluateModulation (int numSamples)
     for (int lfo = 0; lfo < 3; ++lfo)
     {
         const auto prefix = "lfo" + juce::String (lfo + 1) + "_";
-        const auto phase = static_cast<float> (lfoPhase[static_cast<size_t> (lfo)]);
         const auto shape = static_cast<int> (params::load (state, prefix + "shape"));
+        float rateParam = params::load (state, prefix + "rate");
+        const bool sync = params::load (state, prefix + "sync") > 0.5f;
+        if (sync) rateParam *= currentBpm.load (std::memory_order_relaxed) / 60.0f;
+        const auto phaseOffset = params::load (state, prefix + "phase");
+        float phase = static_cast<float> (lfoPhase[static_cast<size_t> (lfo)]) + phaseOffset;
+        if (phase >= 1.0f) phase -= std::floor (phase);
         float value = 0.0f;
         if (shape == 0) value = std::sin (juce::MathConstants<float>::twoPi * phase);
         else if (shape == 1) value = 1.0f - 4.0f * std::abs (phase - 0.5f);
         else if (shape == 2) value = phase * 2.0f - 1.0f;
         else if (shape == 3) value = phase < 0.5f ? 1.0f : -1.0f;
         else value = randomModulation;
-        sources[static_cast<size_t> (lfo + 1)] = value * params::load (state, prefix + "depth");
-        lfoPhase[static_cast<size_t> (lfo)] += static_cast<double> (numSamples) * params::load (state, prefix + "rate") / rate;
+        const auto fadeTime = params::load (state, prefix + "fade");
+        float fadeMul = 1.0f;
+        if (fadeTime > 0.001f)
+        {
+            const auto elapsed = static_cast<double> (sampleCounter - lfoNoteOnTime[static_cast<size_t> (lfo)]) / rate;
+            fadeMul = juce::jlimit (0.0f, 1.0f, static_cast<float> (elapsed / fadeTime));
+        }
+        sources[static_cast<size_t> (lfo + 1)] = value * params::load (state, prefix + "depth") * fadeMul;
+        lfoPhase[static_cast<size_t> (lfo)] += static_cast<double> (numSamples) * rateParam / rate;
         if (lfoPhase[static_cast<size_t> (lfo)] >= 1.0)
         {
             lfoPhase[static_cast<size_t> (lfo)] -= std::floor (lfoPhase[static_cast<size_t> (lfo)]);
@@ -135,8 +171,12 @@ SampleEngine::ModulationValues SampleEngine::evaluateModulation (int numSamples)
         }
     }
     sources[4] = lastVelocity; sources[5] = aftertouch; sources[6] = randomModulation;
-    sources[7] = std::any_of (voices.begin(), voices.end(), [] (const Voice& voice) { return voice.active(); }) ? 1.0f : 0.0f;
-    sources[8] = sources[7] * 0.7f;
+    float ampEnv = 0.0f;
+    for (auto& v : voices) if (v.active()) { ampEnv = v.envelopeLevel(); break; }
+    sources[7] = ampEnv;
+    float modEnvVal = 0.0f;
+    for (int i = 0; i < numSamples; ++i) modEnvVal = modEnvelope.getNextSample();
+    sources[8] = modEnvVal;
     sources[9] = params::load (state, "liquid") * 2.0f - 1.0f; sources[10] = params::load (state, "reflect") * 2.0f - 1.0f;
     sources[11] = params::load (state, "fragment") * 2.0f - 1.0f; sources[12] = params::load (state, "shine") * 2.0f - 1.0f;
     sources[13] = params::load (state, "density") * 2.0f - 1.0f; sources[14] = params::load (state, "fusion") * 2.0f - 1.0f;
@@ -159,30 +199,61 @@ void SampleEngine::noteOn (int note, float velocity, const std::array<SlotPlayba
 {
     lastVelocity = velocity;
     const auto maxVoices = juce::jlimit (16, 128, static_cast<int> (params::load (state, "polyphony")));
+    const auto glideTime = params::load (state, "glide");
+    const auto legatoEnabled = params::load (state, "legato") > 0.5f;
+
     Voice* target = nullptr;
-    for (int i = 0; i < maxVoices; ++i) if (! voices[static_cast<size_t> (i)].active()) { target = &voices[static_cast<size_t> (i)]; break; }
+    if (legatoEnabled)
+    {
+        for (int i = 0; i < maxVoices; ++i)
+            if (voices[static_cast<size_t> (i)].active()) { target = &voices[static_cast<size_t> (i)]; break; }
+    }
+    if (target == nullptr)
+    {
+        for (int i = 0; i < maxVoices; ++i) if (! voices[static_cast<size_t> (i)].active()) { target = &voices[static_cast<size_t> (i)]; break; }
+    }
     if (target == nullptr)
         target = &*std::min_element (voices.begin(), voices.begin() + maxVoices, [] (const Voice& a, const Voice& b) { return a.startedAt() < b.startedAt(); });
+
+    const bool isLegato = legatoEnabled && target->active();
+    const auto glideFromNote = previousNote >= 0 ? static_cast<float> (previousNote) : static_cast<float> (note);
     target->updateEnvelope (params::load (state, "amp_attack"), params::load (state, "amp_decay"), params::load (state, "amp_sustain"), params::load (state, "amp_release"));
-    target->start (note, velocity, ++voiceCounter, slots);
+    target->start (note, velocity, ++voiceCounter, slots, glideFromNote, glideTime, isLegato);
+    filterEnvelope.noteOn();
+    modEnvelope.noteOn();
+    lastFilterNote = note;
+    previousNote = note;
+    lfoNoteOnTime[0] = sampleCounter;
+    lfoNoteOnTime[1] = sampleCounter;
+    lfoNoteOnTime[2] = sampleCounter;
 }
 
 void SampleEngine::noteOff (int note)
 {
     for (auto& voice : voices) if (voice.active() && voice.note() == note) voice.release();
+    bool anyActive = false;
+    for (const auto& voice : voices) if (voice.active()) { anyActive = true; break; }
+    if (! anyActive)
+    {
+        filterEnvelope.noteOff();
+        modEnvelope.noteOff();
+    }
 }
 
-void SampleEngine::processFilter (juce::AudioBuffer<float>& buffer, float modulation)
+void SampleEngine::processFilter (juce::AudioBuffer<float>& buffer, float modulation, float filterEnvValue, int keytrackNote, float envAmount, float keytrackAmount)
 {
-    const auto cutoff = juce::jlimit (20.0f, static_cast<float> (rate * 0.45), params::load (state, "filter_cutoff") * std::exp2 (modulation * 5.0f));
+    const auto baseCutoff = params::load (state, "filter_cutoff");
+    float cutoff = baseCutoff * std::exp2 (static_cast<float> (keytrackNote - 60) / 12.0f * keytrackAmount);
+    cutoff = juce::jlimit (20.0f, static_cast<float> (rate * 0.45), cutoff * std::pow (2.0f, filterEnvValue * envAmount * 4.0f));
+    const auto modulated = juce::jlimit (20.0f, static_cast<float> (rate * 0.45), cutoff * std::exp2 (modulation * 5.0f));
     const auto q = params::load (state, "filter_resonance");
     const auto drive = juce::Decibels::decibelsToGain (params::load (state, "filter_drive"));
     const auto type = static_cast<int> (params::load (state, "filter_type"));
     buffer.applyGain (drive);
-    auto coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (rate, cutoff, q);
-    if (type == 1) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (rate, cutoff, q);
-    else if (type == 2) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeBandPass (rate, cutoff, q);
-    else if (type == 3) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeNotch (rate, cutoff, q);
+    auto coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (rate, modulated, q);
+    if (type == 1) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (rate, modulated, q);
+    else if (type == 2) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeBandPass (rate, modulated, q);
+    else if (type == 3) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeNotch (rate, modulated, q);
     const auto stages = type == 0 || type == 1 ? 2 : 1;
     for (int stage = 0; stage < stages; ++stage)
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
@@ -197,7 +268,12 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
 {
     output.clear();
     const auto frames = output.getNumSamples();
+    sampleCounter += static_cast<uint64_t> (frames);
     for (auto& buffer : slotBuffers) buffer.clear (0, frames);
+    // update envelope params
+    juce::ADSR::Parameters filterParams { params::load (state, "filter_attack"), params::load (state, "filter_decay"), params::load (state, "filter_sustain"), params::load (state, "filter_release") };
+    filterEnvelope.setParameters (filterParams);
+    modEnvelope.setParameters ({ params::load (state, "mod_attack"), params::load (state, "mod_decay"), params::load (state, "mod_sustain"), params::load (state, "mod_release") });
     const auto modulation = evaluateModulation (frames);
     const auto slots = makeSlotSettings (modulation);
     std::array<juce::AudioBuffer<float>*, 3> destinations { &slotBuffers[0], &slotBuffers[1], &slotBuffers[2] };
@@ -212,7 +288,7 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
         else if (message.isNoteOff()) noteOff (message.getNoteNumber());
         else if (message.isChannelPressure()) aftertouch = static_cast<float> (message.getChannelPressureValue()) / 127.0f;
         else if (message.isAftertouch()) aftertouch = static_cast<float> (message.getAfterTouchValue()) / 127.0f;
-        else if (message.isAllNotesOff() || message.isAllSoundOff()) for (auto& voice : voices) voice.kill();
+        else if (message.isAllNotesOff() || message.isAllSoundOff()) { for (auto& voice : voices) voice.kill(); filterEnvelope.noteOff(); modEnvelope.noteOff(); }
         cursor = eventPosition;
     }
     if (cursor < frames) for (auto& voice : voices) voice.render (destinations, cursor, frames - cursor, slots);
@@ -229,20 +305,71 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
     for (int slot = 0; slot < 3; ++slot)
     {
         auto& buffer = slotBuffers[static_cast<size_t> (slot)];
-        const auto mode = static_cast<int> (slotParameters[static_cast<size_t> (slot)].mode->load (std::memory_order_relaxed));
+        const auto& slotSettings = slots[static_cast<size_t> (slot)];
+        if (slotSettings.sample == nullptr || ! slotSettings.audible)
+        {
+            buffer.clear();
+            vintage[static_cast<size_t> (slot)].reset();
+            chrome[static_cast<size_t> (slot)].reset();
+            digital[static_cast<size_t> (slot)].reset();
+            lastModes[static_cast<size_t> (slot)] = -1;
+            modeFadeSamples[static_cast<size_t> (slot)] = 0;
+            continue;
+        }
+        const auto mode = juce::jlimit (0, 2, static_cast<int> (
+            slotParameters[static_cast<size_t> (slot)].mode->load (std::memory_order_relaxed)));
+        auto& dry = modeDryBuffers[static_cast<size_t> (slot)];
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            dry.copyFrom (ch, 0, buffer, ch, 0, frames);
+        if (lastModes[static_cast<size_t> (slot)] != mode)
+        {
+            vintage[static_cast<size_t> (slot)].reset();
+            chrome[static_cast<size_t> (slot)].reset();
+            digital[static_cast<size_t> (slot)].reset();
+            lastModes[static_cast<size_t> (slot)] = mode;
+            modeFadeSamples[static_cast<size_t> (slot)] = 128;
+        }
         if (mode == 0) vintage[static_cast<size_t> (slot)].process (buffer, 0.72f);
         else if (mode == 1) chrome[static_cast<size_t> (slot)].process (buffer, controls);
         else digital[static_cast<size_t> (slot)].process (buffer, controls.density, controls.fragment);
+        auto& fadeRemaining = modeFadeSamples[static_cast<size_t> (slot)];
+        if (fadeRemaining > 0)
+        {
+            const auto faded = juce::jmin (frames, fadeRemaining);
+            const auto alreadyFaded = 128 - fadeRemaining;
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                for (int sampleIndex = 0; sampleIndex < faded; ++sampleIndex)
+                {
+                    const auto mix = static_cast<float> (alreadyFaded + sampleIndex + 1) / 128.0f;
+                    buffer.setSample (ch, sampleIndex,
+                                      dry.getSample (ch, sampleIndex) * (1.0f - mix)
+                                      + buffer.getSample (ch, sampleIndex) * mix);
+                }
+            fadeRemaining -= faded;
+        }
         for (int ch = 0; ch < output.getNumChannels(); ++ch) output.addFrom (ch, 0, buffer, ch, 0, frames, weights[static_cast<size_t> (slot)]);
     }
 
-    processFilter (output, modulation.filter);
+    float filterEnvVal = 0.0f;
+    for (int i = 0; i < frames; ++i) filterEnvVal = filterEnvelope.getNextSample();
+    processFilter (output, modulation.filter, filterEnvVal, lastFilterNote,
+                   params::load (state, "filter_env_amount"), params::load (state, "filter_keytrack"));
     const auto fxMod = modulation.fx * 0.35f;
-    master.process (output, { juce::jlimit (0.0f, 1.0f, params::load (state, "chorus") + fxMod), juce::jlimit (0.0f, 1.0f, params::load (state, "delay") + fxMod), juce::jlimit (0.0f, 1.0f, params::load (state, "reverb") + fxMod),
+    const auto chorusOn = params::load (state, "chorus_enabled") > 0.5f;
+    const auto delayOn = params::load (state, "delay_enabled") > 0.5f;
+    const auto reverbOn = params::load (state, "reverb_enabled") > 0.5f;
+    master.process (output, { juce::jlimit (0.0f, 1.0f, chorusOn ? (params::load (state, "chorus") + fxMod) : 0.0f),
+                               juce::jlimit (0.0f, 1.0f, delayOn ? (params::load (state, "delay") + fxMod) : 0.0f),
+                               params::load (state, "delay_time"), params::load (state, "delay_feedback"),
+                               juce::jlimit (0.0f, 1.0f, reverbOn ? (params::load (state, "reverb") + fxMod) : 0.0f),
+                              params::load (state, "reverb_size"), params::load (state, "reverb_damp"),
                               params::load (state, "compressor"), params::load (state, "width"), params::load (state, "eq_low"),
-                              params::load (state, "eq_high"), params::load (state, "master_gain"), params::load (state, "soft_clip") > 0.5f,
+                              params::load (state, "eq_high"), params::load (state, "master_input_gain"), params::load (state, "master_gain"), params::load (state, "soft_clip") > 0.5f,
                               static_cast<int> (params::load (state, "oversampling")) });
     const auto currentPeak = juce::jmax (output.getMagnitude (0, frames), output.getNumChannels() > 1 ? output.getMagnitude (1, frames) : 0.0f);
     peak.store (juce::jmax (currentPeak, peak.load() * 0.92f), std::memory_order_relaxed);
+    bool anyActive = false;
+    for (const auto& v : voices) if (v.active()) { anyActive = true; break; }
+    if (! anyActive) { filterEnvelope.noteOff(); modEnvelope.noteOff(); }
 }
 }

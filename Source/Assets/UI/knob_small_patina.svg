@@ -1,0 +1,18 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="71.1176" height="71.1179" viewBox="0 0 71.1176 71.1179" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="HD Knob Face Patina" opacity="0.18" filter="url(#filter0_f_0_745)" style="mix-blend-mode:multiply">
+<ellipse cx="35.5588" cy="35.5589" rx="34.1088" ry="34.1089" fill="url(#paint0_linear_0_745)"/>
+</g>
+<defs>
+<filter id="filter0_f_0_745" x="0" y="0" width="71.1176" height="71.1179" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="0.725" result="effect1_foregroundBlur_0_745"/>
+</filter>
+<linearGradient id="paint0_linear_0_745" x1="6.28887" y1="15.4191" x2="64.0002" y2="56.8528" gradientUnits="userSpaceOnUse">
+<stop stop-color="#525457"/>
+<stop offset="0.3" stop-color="#A19E96"/>
+<stop offset="0.58" stop-color="#FFFCF2"/>
+<stop offset="1" stop-color="#7A7D82"/>
+</linearGradient>
+</defs>
+</svg>

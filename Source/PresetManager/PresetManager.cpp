@@ -11,8 +11,29 @@ PresetManager::PresetManager (juce::AudioProcessorValueTreeState& parameters, Sa
 juce::File PresetManager::directory() const
 {
     auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                   .getChildFile ("Chrome Audio").getChildFile ("CHROME 2000").getChildFile ("Presets");
+                   .getChildFile ("LEVSAN").getChildFile ("CHROME 2000").getChildFile ("Presets");
+    // Migrate presets stored under the legacy "Chrome Audio" vendor folder.
+    const auto legacy = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                            .getChildFile ("Chrome Audio").getChildFile ("CHROME 2000").getChildFile ("Presets");
     dir.createDirectory();
+    if (legacy.isDirectory())
+    {
+        for (const auto& file : legacy.findChildFiles (juce::File::findFiles, false, "*.xml"))
+        {
+            const auto target = dir.getChildFile (file.getFileNameWithoutExtension() + ".c2preset");
+            if (! target.existsAsFile())
+                file.copyFileTo (target);
+        }
+    }
+    // Normalize any legacy .xml presets already in the new folder.
+    for (const auto& file : dir.findChildFiles (juce::File::findFiles, false, "*.xml"))
+    {
+        const auto target = dir.getChildFile (file.getFileNameWithoutExtension() + ".c2preset");
+        if (! target.existsAsFile())
+            file.moveFileTo (target);
+        else
+            file.deleteFile();
+    }
     return dir;
 }
 
@@ -34,8 +55,11 @@ void PresetManager::applyFactory (const juce::String& name)
 {
     setActual ("liquid", 0.45f); setActual ("reflect", 0.35f); setActual ("fragment", 0.25f);
     setActual ("shine", 0.55f); setActual ("density", 0.5f); setActual ("fusion", 0.4f);
-    setActual ("chorus", 0.12f); setActual ("delay", 0.12f); setActual ("reverb", 0.18f);
-    setActual ("filter_cutoff", 16000.0f); setActual ("amp_attack", 0.01f); setActual ("amp_release", 0.5f);
+    setActual ("chorus", 0.25f); setActual ("delay", 0.30f); setActual ("reverb", 0.35f);
+    setActual ("filter_cutoff", 8720.0f); setActual ("filter_resonance", 0.05f); setActual ("filter_drive", 2.88f);
+    setActual ("amp_attack", 0.01f); setActual ("amp_decay", 0.25f); setActual ("amp_sustain", 0.75f); setActual ("amp_release", 0.29f);
+    setActual ("lfo1_depth", 0.25f); setActual ("mod1_source", 1.0f); setActual ("mod1_destination", 1.0f); setActual ("mod1_depth", 0.25f);
+    setActual ("master_gain", -3.0f);
     if (name == "Liquid Cathedral") { setActual ("liquid", 0.92f); setActual ("reflect", 0.78f); setActual ("fusion", 0.76f); setActual ("reverb", 0.46f); setActual ("amp_attack", 0.8f); setActual ("amp_release", 3.8f); }
     else if (name == "Mercury Glass") { setActual ("liquid", 0.72f); setActual ("reflect", 0.88f); setActual ("shine", 0.91f); setActual ("fragment", 0.38f); setActual ("filter_cutoff", 11800.0f); }
     else if (name == "Tape Constellation") { for (int i = 0; i < 3; ++i) setActual (params::slotId (i, "mode"), 0.0f); setActual ("chorus", 0.34f); setActual ("delay", 0.28f); setActual ("eq_high", -2.4f); }
@@ -93,4 +117,3 @@ juce::String PresetManager::step (int direction)
     return current;
 }
 }
-

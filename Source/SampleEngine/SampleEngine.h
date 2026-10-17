@@ -23,6 +23,7 @@ public:
     [[nodiscard]] std::shared_ptr<const SampleData> sample (int slot) const;
     [[nodiscard]] juce::String samplePath (int slot) const;
     [[nodiscard]] float outputPeak() const noexcept { return peak.load (std::memory_order_relaxed); }
+    void setBpm (float bpm) noexcept { currentBpm.store (juce::jlimit (20.0f, 400.0f, bpm), std::memory_order_relaxed); }
     std::function<void (int, const juce::String&)> sampleChanged;
 
 private:
@@ -36,7 +37,7 @@ private:
     ModulationValues evaluateModulation (int numSamples);
     void noteOn (int note, float velocity, const std::array<SlotPlayback, 3>&);
     void noteOff (int note);
-    void processFilter (juce::AudioBuffer<float>&, float modulation);
+    void processFilter (juce::AudioBuffer<float>&, float modulation, float filterEnv, int keytrackNote, float envAmount, float keytrackAmount);
 
     juce::AudioProcessorValueTreeState& state;
     struct SlotParameterPointers
@@ -54,14 +55,23 @@ private:
     mutable juce::CriticalSection metadataLock;
     std::array<Voice, 128> voices;
     std::array<juce::AudioBuffer<float>, 3> slotBuffers;
+    std::array<juce::AudioBuffer<float>, 3> modeDryBuffers;
     std::array<VintageProcessor, 3> vintage;
     std::array<ChromeProcessor, 3> chrome;
     std::array<DigitalProcessor, 3> digital;
+    std::array<int, 3> lastModes { -1, -1, -1 };
+    std::array<int, 3> modeFadeSamples {};
     std::array<std::array<juce::dsp::IIR::Filter<float>, 2>, 2> filterStages;
     MasterEffects master;
     double rate = 44100.0;
     uint64_t voiceCounter = 0;
+    juce::ADSR filterEnvelope, modEnvelope;
+    int lastFilterNote = 60;
+    int previousNote = -1;
+    uint64_t sampleCounter = 0;
     std::array<double, 3> lfoPhase {};
+    std::array<uint64_t, 3> lfoNoteOnTime {};
+    std::atomic<float> currentBpm { 120.0f };
     float lastVelocity = 0.0f, aftertouch = 0.0f, randomModulation = 0.0f;
     uint32_t modulationRandom = 0xa19f2000u;
     std::atomic<float> peak { 0.0f };

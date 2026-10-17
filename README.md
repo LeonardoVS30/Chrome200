@@ -63,7 +63,7 @@ Todos los controles de síntesis y efectos se publican mediante `AudioProcessorV
 
 ## Presets incluidos
 
-- Chrome Initiation
+- Init Patch
 - Liquid Cathedral
 - Mercury Glass
 - Tape Constellation

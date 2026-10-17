@@ -23,8 +23,7 @@ private:
     juce::File directory() const;
     juce::AudioProcessorValueTreeState& state;
     SampleEngine& engine;
-    juce::String current { "Chrome Initiation" };
-    const juce::StringArray factory { "Chrome Initiation", "Liquid Cathedral", "Mercury Glass", "Tape Constellation", "Digital Pollen", "Frozen Alloy" };
+    juce::String current { "Init Patch" };
+    const juce::StringArray factory { "Init Patch", "Liquid Cathedral", "Mercury Glass", "Tape Constellation", "Digital Pollen", "Frozen Alloy" };
 };
 }
-

@@ -23,11 +23,18 @@ bool Chrome2000AudioProcessor::isBusesLayoutSupported (const BusesLayout& layout
 void Chrome2000AudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
-    if (chrome::params::load (parameters, "power") < 0.5f)
+    const bool powerOn = chrome::params::load (parameters, "power") >= 0.5f;
+    if (! powerOn)
     {
+        if (powerWasOn) { engine.reset(); powerWasOn = false; }
         buffer.clear();
         return;
     }
+    if (! powerWasOn) powerWasOn = true;
+    if (auto* ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+            if (auto bpm = pos->getBpm())
+                engine.setBpm (static_cast<float> (*bpm));
     engine.process (buffer, midi);
 }
 

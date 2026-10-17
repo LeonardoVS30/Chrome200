@@ -10,7 +10,7 @@ void DigitalProcessor::prepare (double sampleRate, int)
 
 void DigitalProcessor::reset()
 {
-    history.clear(); writePosition = 0; holdCounter = 0; held.fill (0.0f);
+    history.clear(); writePosition = 0; holdCounter = 0; held.fill (0.0f); noiseState = 0x82a2f91u;
 }
 
 void DigitalProcessor::process (juce::AudioBuffer<float>& buffer, float density, float texture)

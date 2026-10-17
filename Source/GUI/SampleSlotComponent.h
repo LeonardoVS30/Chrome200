@@ -16,6 +16,7 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
     void refresh();
+    void setFigmaSkinMode (bool enabled);
     void setViewMode (WaveformComponent::ViewMode view) { waveform.setViewMode (view); }
 
 private:
@@ -37,5 +38,6 @@ private:
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
     std::unique_ptr<ComboAttachment> modeAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
+    bool figmaSkinMode = false;
 };
 }

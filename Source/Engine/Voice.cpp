@@ -15,23 +15,59 @@ void Voice::updateEnvelope (float attack, float decay, float sustain, float rele
     envelope.setParameters (envelopeParameters);
 }
 
-void Voice::start (int noteNumber, float velocity, uint64_t age, const std::array<SlotPlayback, 3>& slots)
+void Voice::start (int noteNumber, float velocity, uint64_t age, const std::array<SlotPlayback, 3>& slots, float glideFromNote, float glideTime, bool legato)
 {
+    if (legato && isActive)
+    {
+        glideTarget = static_cast<double> (noteNumber);
+        if (glideTime > 0.001f)
+        {
+            gliding = true;
+            glideStep = (glideTarget - glideNote) / static_cast<double> (juce::jmax (1.0, glideTime * outputRate));
+        }
+        else
+        {
+            glideNote = glideTarget;
+            gliding = false;
+        }
+        midiNote = noteNumber;
+        noteVelocity = velocity;
+        ageStamp = age;
+        hasPlayed = true;
+        return;
+    }
+
     midiNote = noteNumber;
     noteVelocity = velocity;
     ageStamp = age;
     for (size_t i = 0; i < positions.size(); ++i)
     {
+        slotActive[i] = false;
         if (const auto& sample = slots[i].sample)
         {
             const auto first = slots[i].start * static_cast<float> (sample->length() - 1);
             const auto last = slots[i].end * static_cast<float> (sample->length() - 1);
             positions[i] = slots[i].reverse ? juce::jmax (first, last) : juce::jmin (first, last);
+            slotActive[i] = slots[i].audible && std::abs (last - first) >= 2.0f;
         }
     }
     envelope.reset();
     envelope.noteOn();
     isActive = true;
+    if (glideTime > 0.001f && hasPlayed && glideFromNote >= 0.0f)
+    {
+        glideNote = static_cast<double> (glideFromNote);
+        glideTarget = static_cast<double> (noteNumber);
+        gliding = true;
+        glideStep = (glideTarget - glideNote) / static_cast<double> (juce::jmax (1.0, glideTime * outputRate));
+    }
+    else
+    {
+        glideNote = static_cast<double> (noteNumber);
+        glideTarget = glideNote;
+        gliding = false;
+    }
+    hasPlayed = true;
 }
 
 void Voice::release() { envelope.noteOff(); }
@@ -41,6 +77,8 @@ void Voice::kill() noexcept
     envelope.reset();
     isActive = false;
     midiNote = -1;
+    lastEnvelopeLevel = 0.0f;
+    slotActive.fill (false);
 }
 
 void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startSample, int numSamples,
@@ -51,7 +89,9 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
 
     for (int frame = 0; frame < numSamples; ++frame)
     {
-        const auto amp = envelope.getNextSample() * noteVelocity;
+        const auto envLevel = envelope.getNextSample();
+        const auto amp = envLevel * noteVelocity;
+        lastEnvelopeLevel = envLevel;
         if (! envelope.isActive())
         {
             kill();
@@ -62,7 +102,7 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
         {
             const auto& settings = slots[slot];
             const auto& source = settings.sample;
-            if (! source || ! settings.audible || outputs[slot] == nullptr)
+            if (! slotActive[slot] || ! source || ! settings.audible || outputs[slot] == nullptr)
                 continue;
 
             const auto low = static_cast<double> (juce::jmin (settings.start, settings.end) * static_cast<float> (source->length() - 1));
@@ -70,7 +110,7 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
             if (high - low < 2.0)
                 continue;
 
-            const auto semitones = static_cast<double> (midiNote - 60) + settings.tune;
+            const auto semitones = glideNote - 60.0 + static_cast<double> (settings.tune);
             auto increment = source->sampleRate() / outputRate * std::exp2 (semitones / 12.0);
             if (settings.reverse)
                 increment = -increment;
@@ -92,9 +132,22 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
                 }
                 else
                 {
-                    positions[slot] = juce::jlimit (low, high - 1.0, positions[slot]);
+                    slotActive[slot] = false;
                 }
             }
+        }
+
+        if (gliding)
+        {
+            glideNote += glideStep;
+            if (glideStep > 0.0 && glideNote >= glideTarget) { glideNote = glideTarget; gliding = false; }
+            else if (glideStep < 0.0 && glideNote <= glideTarget) { glideNote = glideTarget; gliding = false; }
+        }
+
+        if (std::none_of (slotActive.begin(), slotActive.end(), [] (bool active) { return active; }))
+        {
+            kill();
+            break;
         }
     }
 }

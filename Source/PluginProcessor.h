@@ -34,6 +34,7 @@ public:
     chrome::PresetManager presets;
 
 private:
+    bool powerWasOn = true;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chrome2000AudioProcessor)
 };
 

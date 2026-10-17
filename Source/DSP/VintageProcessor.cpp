@@ -20,6 +20,8 @@ void VintageProcessor::reset()
 {
     for (int channel = 0; channel < 2; ++channel) { headBump[channel].reset(); rollOff[channel].reset(); }
     compressorEnvelope = 0.0f;
+    wowPhase = 0.0;
+    flutterPhase = 0.0;
 }
 
 void VintageProcessor::process (juce::AudioBuffer<float>& buffer, float amount)
@@ -42,14 +44,16 @@ void VintageProcessor::process (juce::AudioBuffer<float>& buffer, float amount)
 
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {
-            auto x = buffer.getSample (ch, i);
+            const auto dry = buffer.getSample (ch, i);
+            auto x = dry;
             x = std::tanh (x * (1.0f + amount * 2.5f + drift)) * compression;
-            x += (random.nextFloat() * 2.0f - 1.0f) * 0.00045f * amount;
+            const auto signalGate = juce::jlimit (0.0f, 1.0f, compressorEnvelope * 4.0f);
+            x += (random.nextFloat() * 2.0f - 1.0f) * 0.00030f * amount * signalGate;
             x = headBump[ch].processSample (x);
             x = rollOff[ch].processSample (x);
-            buffer.setSample (ch, i, x);
+            const auto wetMix = 0.18f + amount * 0.32f;
+            buffer.setSample (ch, i, dry * (1.0f - wetMix) + x * wetMix);
         }
     }
 }
 }
-

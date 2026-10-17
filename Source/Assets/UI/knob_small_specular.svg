@@ -1,0 +1,16 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="44.6949" height="25.5941" viewBox="0 0 44.6949 25.5941" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="HD Knob Face Specular" opacity="0.18" filter="url(#filter0_f_0_708)" style="mix-blend-mode:screen">
+<ellipse cx="22.3475" cy="12.797" rx="21.1475" ry="11.597" fill="url(#paint0_radial_0_708)"/>
+</g>
+<defs>
+<filter id="filter0_f_0_708" x="0" y="0" width="44.6949" height="25.5941" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+<feGaussianBlur stdDeviation="0.6" result="effect1_foregroundBlur_0_708"/>
+</filter>
+<radialGradient id="paint0_radial_0_708" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(22.3475 12.797) scale(42.2949 23.1941)">
+<stop stop-color="#FFFCF5" stop-opacity="0.75"/>
+<stop offset="1" stop-color="#FFFCF5" stop-opacity="0"/>
+</radialGradient>
+</defs>
+</svg>

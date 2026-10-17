@@ -6,7 +6,8 @@ namespace chrome
 {
 struct MasterControls
 {
-    float chorus, delay, reverb, compressor, width, lowEq, highEq, gain;
+    float chorus, delay, delayTime, delayFeedback, reverb, reverbSize, reverbDamp;
+    float compressor, width, lowEq, highEq, inputGain, gain;
     bool softClip;
     int oversampling;
 };
@@ -26,7 +27,7 @@ private:
     juce::dsp::Limiter<float> limiter;
     juce::dsp::Oversampling<float> oversampling2x { 2, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, true };
     juce::dsp::Oversampling<float> oversampling4x { 2, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, true };
-    std::array<juce::dsp::IIR::Filter<float>, 2> lowShelf, highShelf;
+    std::array<juce::dsp::IIR::Filter<float>, 2> lowShelf, highShelf, dcBlocker;
     juce::AudioBuffer<float> wetBuffer;
     double rate = 44100.0;
 };

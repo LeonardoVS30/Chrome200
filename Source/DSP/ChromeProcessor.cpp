@@ -23,6 +23,7 @@ void ChromeProcessor::reset()
     for (auto& bank : resonators) for (auto& resonator : bank) resonator = {};
     for (auto& delay : diffusion) delay.clear();
     combDelay.clear(); diffusionWrite.fill (0); combWrite = 0; shiftPhase = 0.0;
+    randomState = 0x2000cafeu;
 }
 
 float ChromeProcessor::spectralSample (int channel, float input, float freeze, float shine)
@@ -84,12 +85,16 @@ void ChromeProcessor::process (juce::AudioBuffer<float>& buffer, const ChromeCon
             for (int mode = 0; mode < modalCount; ++mode)
             {
                 const auto frequency = juce::jmin (static_cast<float> (rate * 0.45), (190.0f + c.shine * 520.0f) * ratios[static_cast<size_t> (mode)]);
-                const auto radius = 0.965f + c.reflect * 0.032f;
+                const auto radius = 0.94f + c.reflect * 0.045f;
                 const auto coefficient = 2.0f * radius * std::cos (juce::MathConstants<float>::twoPi * frequency / static_cast<float> (rate));
                 auto& r = resonators[static_cast<size_t> (ch)][static_cast<size_t> (mode)];
-                const auto excitation = x * (0.0035f + c.density * 0.005f) / static_cast<float> (mode + 1);
-                const auto y = excitation + coefficient * r.y1 - radius * radius * r.y2;
-                r.y2 = r.y1; r.y1 = y;
+                const auto excitation = x * (0.0015f + c.density * 0.0025f) / static_cast<float> (mode + 1);
+                auto y = excitation + coefficient * r.y1 - radius * radius * r.y2;
+                if (! std::isfinite (y))
+                    y = 0.0f;
+                y = juce::jlimit (-2.0f, 2.0f, y);
+                r.y2 = r.y1;
+                r.y1 = y;
                 modal += y;
             }
             x += modal * c.reflect;
@@ -109,9 +114,11 @@ void ChromeProcessor::process (juce::AudioBuffer<float>& buffer, const ChromeCon
             auto read = combWrite - static_cast<int> (combTime * static_cast<float> (rate));
             while (read < 0) read += combLength;
             const auto reflected = combDelay.getSample (ch, read);
-            combDelay.setSample (ch, combWrite, dry + reflected * (0.25f + c.density * 0.45f));
+            combDelay.setSample (ch, combWrite, dry + reflected * (0.18f + c.density * 0.36f));
             const auto shifted = x * (1.0f + shimmer * c.shine * 0.05f);
-            buffer.setSample (ch, i, std::tanh (dry * (1.0f - c.fusion * 0.45f) + (shifted + reflected * c.reflect) * c.fusion));
+            const auto wet = std::tanh (shifted * 0.72f + reflected * c.reflect * 0.28f);
+            const auto wetMix = 0.16f + c.fusion * 0.34f;
+            buffer.setSample (ch, i, std::tanh (dry * (1.0f - wetMix) + wet * wetMix));
         }
         for (size_t stage = 0; stage < diffusion.size(); ++stage)
             if (++diffusionWrite[stage] == diffusion[stage].getNumSamples()) diffusionWrite[stage] = 0;

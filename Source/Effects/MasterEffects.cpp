@@ -9,7 +9,14 @@ void MasterEffects::prepare (double sampleRate, int maxBlockSize)
     chorus.prepare (stereo); delay.prepare (stereo); reverb.prepare (stereo);
     compressor.prepare (stereo); limiter.prepare (stereo);
     juce::dsp::ProcessSpec mono { sampleRate, static_cast<juce::uint32> (maxBlockSize), 1 };
-    for (int ch = 0; ch < 2; ++ch) { lowShelf[ch].prepare (mono); highShelf[ch].prepare (mono); }
+    const auto dcCoefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 12.0, 0.70710678f);
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        lowShelf[ch].prepare (mono);
+        highShelf[ch].prepare (mono);
+        dcBlocker[ch].prepare (mono);
+        dcBlocker[ch].coefficients = dcCoefficients;
+    }
     wetBuffer.setSize (2, maxBlockSize, false, true, true);
     oversampling2x.initProcessing (static_cast<size_t> (maxBlockSize));
     oversampling4x.initProcessing (static_cast<size_t> (maxBlockSize));
@@ -24,29 +31,36 @@ void MasterEffects::reset()
 {
     chorus.reset(); delay.reset(); reverb.reset(); compressor.reset(); limiter.reset();
     oversampling2x.reset(); oversampling4x.reset();
-    for (int ch = 0; ch < 2; ++ch) { lowShelf[ch].reset(); highShelf[ch].reset(); }
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        lowShelf[ch].reset();
+        highShelf[ch].reset();
+        dcBlocker[ch].reset();
+    }
 }
 
 void MasterEffects::process (juce::AudioBuffer<float>& buffer, const MasterControls& c)
 {
+    buffer.applyGain (juce::Decibels::decibelsToGain (c.inputGain));
     auto block = juce::dsp::AudioBlock<float> (buffer);
-    chorus.setMix (c.chorus * 0.55f);
+    chorus.setMix (c.chorus);
     chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
 
-    const auto feedback = 0.18f + c.delay * 0.5f;
+    delay.setDelay (static_cast<float> (rate) * c.delayTime);
+    const auto feedback = c.delayFeedback;
     for (int i = 0; i < buffer.getNumSamples(); ++i)
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
         {
             const auto dry = buffer.getSample (ch, i);
             const auto echo = delay.popSample (ch);
             delay.pushSample (ch, dry + echo * feedback);
-            buffer.setSample (ch, i, dry + echo * c.delay * 0.45f);
+            buffer.setSample (ch, i, dry + echo * c.delay);
         }
 
     juce::dsp::Reverb::Parameters reverbParameters;
-    reverbParameters.roomSize = 0.35f + c.reverb * 0.45f;
-    reverbParameters.damping = 0.55f;
-    reverbParameters.wetLevel = c.reverb * 0.35f;
+    reverbParameters.roomSize = c.reverbSize;
+    reverbParameters.damping = c.reverbDamp;
+    reverbParameters.wetLevel = c.reverb;
     reverbParameters.dryLevel = 1.0f;
     reverbParameters.width = 1.0f;
     reverb.setParameters (reverbParameters);
@@ -78,6 +92,10 @@ void MasterEffects::process (juce::AudioBuffer<float>& buffer, const MasterContr
             buffer.setSample (0, i, mid + side);
             buffer.setSample (1, i, mid - side);
         }
+
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        for (int i = 0; i < buffer.getNumSamples(); ++i)
+            buffer.setSample (ch, i, dcBlocker[static_cast<size_t> (ch)].processSample (buffer.getSample (ch, i)));
 
     buffer.applyGain (juce::Decibels::decibelsToGain (c.gain));
     if (c.softClip)

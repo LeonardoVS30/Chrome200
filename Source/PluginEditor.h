@@ -14,42 +14,83 @@ public:
     void resized() override;
 
 private:
-    class BoundKnob final : public juce::Component
+    class BoundKnob final : public juce::Component, private juce::Slider::Listener
     {
     public:
-        BoundKnob (juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& name);
+        BoundKnob (juce::AudioProcessorValueTreeState&, const juce::String& id, const juce::String& name,
+                   bool large = false, bool glow = false);
         void resized() override;
+        void setFigmaSkinMode (bool enabled);
+        const juce::String& getValueText() const { return valueText; }
+        std::function<void()> onDragStart;
+        std::function<void()> onDragEnd;
     private:
+        void sliderValueChanged (juce::Slider*) override;
+        void updateValue();
+        juce::String parameterId;
+        juce::String valueText;
         juce::Label label;
+        juce::Label value;
         juce::Slider slider;
         juce::AudioProcessorValueTreeState::SliderAttachment attachment;
+        bool figmaSkinMode = false;
+    };
+    class ValueBubble final : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics&) override;
+        void setText (const juce::String& t) { text = t; repaint(); }
+    private:
+        juce::String text;
     };
     class LfoDisplay final : public juce::Component
     {
     public:
         void paint (juce::Graphics&) override;
     };
+    class AboutOverlay final : public juce::Component
+    {
+    public:
+        AboutOverlay();
+        void paint (juce::Graphics&) override;
+        void resized() override;
+    private:
+        juce::TextButton close { "CERRAR" };
+    };
     void timerCallback() override;
     void rebuildPresetList();
     void savePreset();
     void showAbout();
+    static std::unique_ptr<juce::Drawable> drawableFromData (const void*, int);
 
     Chrome2000AudioProcessor& processor;
     chrome::ChromeLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 350 };
     juce::Label logo, subtitle, outputLabel, credit;
+    juce::Image figmaSkin;
+    std::unique_ptr<juce::Drawable> logoMark, wordmark;
     juce::TextButton logoHitArea;
     juce::ComboBox presetBox;
     juce::TextButton previous { "<" }, next { ">" }, save { "SAVE" }, power { "POWER" };
     juce::TextButton waveTab { "WAVE" }, spectrumTab { "SPECTRUM" }, modTab { "MOD" };
+    juce::TextButton legato { "LEGATO" };
+    juce::TextButton chorusToggle { " " }, delayToggle { " " }, reverbToggle { " " };
     juce::AudioProcessorValueTreeState::ButtonAttachment powerAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment legatoAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment chorusToggleAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment delayToggleAttachment;
+    juce::AudioProcessorValueTreeState::ButtonAttachment reverbToggleAttachment;
     std::array<std::unique_ptr<chrome::SampleSlotComponent>, 3> slots;
-    std::vector<std::unique_ptr<BoundKnob>> chromeKnobs, filterKnobs, envelopeKnobs, effectKnobs, modulationKnobs;
-    juce::ComboBox filterType, modulationSource, modulationDestination, lfoShape;
+    std::vector<std::unique_ptr<BoundKnob>> filterKnobs, envelopeKnobs, pitchKnobs, effectKnobs, masterKnobs, modulationKnobs;
+    juce::ComboBox filterType, modulationSource, modulationDestination, lfoShape, lfo2Shape, lfo3Shape;
     juce::AudioProcessorValueTreeState::ComboBoxAttachment filterTypeAttachment;
-    juce::AudioProcessorValueTreeState::ComboBoxAttachment modulationSourceAttachment, modulationDestinationAttachment, lfoShapeAttachment;
+    juce::AudioProcessorValueTreeState::ComboBoxAttachment modulationSourceAttachment, modulationDestinationAttachment, lfoShapeAttachment, lfo2ShapeAttachment, lfo3ShapeAttachment;
     LfoDisplay lfoDisplay;
+    ValueBubble valueBubble;
+    AboutOverlay aboutOverlay;
     juce::Slider morphX;
     juce::AudioProcessorValueTreeState::SliderAttachment morphXAttachment;
     float displayedPeak = 0.0f;
+    BoundKnob* activeDragKnob = nullptr;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chrome2000AudioProcessorEditor)
 };
