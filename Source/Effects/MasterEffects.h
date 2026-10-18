@@ -21,7 +21,7 @@ public:
 
 private:
     juce::dsp::Chorus<float> chorus;
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delay { 192000 };
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> delay { 1 };
     juce::dsp::Reverb reverb;
     juce::dsp::Compressor<float> compressor;
     juce::dsp::Limiter<float> limiter;
@@ -30,5 +30,6 @@ private:
     std::array<juce::dsp::IIR::Filter<float>, 2> lowShelf, highShelf, dcBlocker;
     juce::AudioBuffer<float> wetBuffer;
     double rate = 44100.0;
+    float maximumDelaySamples = 1.0f;
 };
 }

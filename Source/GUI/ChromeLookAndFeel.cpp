@@ -35,8 +35,10 @@ ChromeLookAndFeel::ChromeLookAndFeel()
     setColour (juce::Label::textColourId, ink);
     setColour (juce::ComboBox::textColourId, ink);
     setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xffd8d7d7));
-    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xffe3e2e2));
-    setColour (juce::PopupMenu::textColourId, ink);
+    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xf02b2e33));
+    setColour (juce::PopupMenu::textColourId, juce::Colour (0xffeef2f7));
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xa65f8fd8));
+    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
     setColour (juce::TextButton::textColourOffId, juce::Colour (0xff3d4044));
     setColour (juce::TextButton::textColourOnId, juce::Colour (0xffeff5ff));
 }
@@ -74,6 +76,7 @@ void ChromeLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& 
         juce::LookAndFeel_V4::positionComboBoxText (box, label);
     }
     label.setFont (getComboBoxFont (box));
+    label.setColour (juce::Label::textColourId, box.findColour (juce::ComboBox::textColourId));
 }
 
 void ChromeLookAndFeel::drawAsset (juce::Graphics& g, const std::unique_ptr<juce::Drawable>& asset, juce::Rectangle<float> bounds)
@@ -212,13 +215,85 @@ void ChromeLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, 
     }
     else
     {
-        g.setGradientFill (juce::ColourGradient (dark ? juce::Colour (0xff57595c) : juce::Colour (0xffe7e6e6), 0, 0,
-                                                 dark ? juce::Colour (0xff26282b) : juce::Colour (0xffb9b8b8), 0, static_cast<float> (height), false));
+        g.setColour (juce::Colour (0x30000000));
+        g.fillRoundedRectangle (b.translated (0.0f, 1.5f), 7.0f);
+        g.setGradientFill (juce::ColourGradient (dark ? juce::Colour (0xd95a5f67) : juce::Colour (0xcff7f9fb), 0, 0,
+                                                 dark ? juce::Colour (0xd925292e) : juce::Colour (0xc7b9bec5), 0, static_cast<float> (height), false));
         g.fillRoundedRectangle (b, 7.0f);
-        g.setColour (juce::Colour (0xff8e8e8f));
+        g.setColour (dark ? juce::Colour (0x8feaf2ff) : juce::Colour (0x9fffffff));
+        g.drawRoundedRectangle (b.reduced (1.0f), 6.0f, 0.8f);
+        g.setColour (dark ? juce::Colour (0xff777d86) : juce::Colour (0xff888d94));
         g.drawRoundedRectangle (b, 7.0f, 0.8f);
     }
     juce::Path arrow; arrow.addTriangle (static_cast<float> (width - 20), height * 0.42f, static_cast<float> (width - 10), height * 0.42f, static_cast<float> (width - 15), height * 0.62f);
     g.setColour (dark ? juce::Colour (0xffeceef1) : box.findColour (juce::ComboBox::textColourId)); g.fillPath (arrow);
+}
+
+void ChromeLookAndFeel::drawPopupMenuBackground (juce::Graphics& g, int width, int height)
+{
+    const auto bounds = juce::Rectangle<float> (0.5f, 0.5f, static_cast<float> (width - 1), static_cast<float> (height - 1));
+    juce::ColourGradient glass (juce::Colour (0xf25a6069), bounds.getX(), bounds.getY(),
+                                juce::Colour (0xf224282e), bounds.getX(), bounds.getBottom(), false);
+    glass.addColour (0.42, juce::Colour (0xee3d4249));
+    g.setGradientFill (glass);
+    g.fillRoundedRectangle (bounds, 9.0f);
+    g.setColour (juce::Colour (0x38ffffff));
+    g.drawRoundedRectangle (bounds.reduced (1.0f), 8.0f, 1.0f);
+    g.setColour (juce::Colour (0x7f111419));
+    g.drawRoundedRectangle (bounds, 9.0f, 1.0f);
+}
+
+void ChromeLookAndFeel::drawPopupMenuItem (juce::Graphics& g, const juce::Rectangle<int>& area,
+                                            bool isSeparator, bool isActive, bool isHighlighted,
+                                            bool isTicked, bool hasSubMenu, const juce::String& text,
+                                            const juce::String& shortcutKeyText, const juce::Drawable* icon,
+                                            const juce::Colour* textColour)
+{
+    if (isSeparator)
+    {
+        g.setColour (juce::Colour (0x38ffffff));
+        g.fillRect (area.reduced (11, 0).withHeight (1).withCentre (area.getCentre()));
+        return;
+    }
+
+    auto row = area.toFloat().reduced (4.0f, 2.0f);
+    if (isHighlighted && isActive)
+    {
+        juce::ColourGradient highlight (juce::Colour (0xb0719de0), row.getX(), row.getY(),
+                                        juce::Colour (0x8f3c6099), row.getRight(), row.getBottom(), false);
+        g.setGradientFill (highlight);
+        g.fillRoundedRectangle (row, 6.0f);
+        g.setColour (juce::Colour (0x4fffffff));
+        g.drawRoundedRectangle (row.reduced (0.5f), 6.0f, 0.8f);
+    }
+
+    const auto colour = textColour != nullptr ? *textColour
+                                               : juce::Colour (isActive ? 0xffeef2f7 : 0xff777c84);
+    const auto iconArea = area.withWidth (juce::jmin (32, area.getHeight())).reduced (8);
+    if (icon != nullptr)
+        icon->drawWithin (g, iconArea.toFloat(), juce::RectanglePlacement::centred, isActive ? 1.0f : 0.45f);
+    else if (isTicked)
+    {
+        g.setColour (juce::Colour (0xff9fc4ff));
+        g.fillEllipse (iconArea.toFloat().withSizeKeepingCentre (7.0f, 7.0f));
+    }
+
+    auto textArea = area.reduced (32, 0).withTrimmedRight (hasSubMenu ? 18 : 7);
+    g.setColour (colour);
+    g.setFont (juce::Font (juce::FontOptions (inter).withHeight (13.0f)));
+    g.drawFittedText (text, textArea, juce::Justification::centredLeft, 1);
+    if (shortcutKeyText.isNotEmpty())
+    {
+        g.setColour (colour.withAlpha (0.58f));
+        g.drawText (shortcutKeyText, textArea, juce::Justification::centredRight);
+    }
+    if (hasSubMenu)
+    {
+        juce::Path arrow;
+        const auto x = static_cast<float> (area.getRight() - 10);
+        const auto y = static_cast<float> (area.getCentreY());
+        arrow.addTriangle (x - 3.0f, y - 4.0f, x - 3.0f, y + 4.0f, x + 2.0f, y);
+        g.fillPath (arrow);
+    }
 }
 }

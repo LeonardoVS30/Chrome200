@@ -51,6 +51,12 @@ juce::String slotId (int slot, const juce::String& name)
     return "s" + juce::String (slot + 1) + "_" + name;
 }
 
+juce::StringArray delayDivisionNames()
+{
+    return { "1/1", "1/2.", "1/2", "1/4.", "1/4", "1/8.", "1/4T",
+             "1/8", "1/16.", "1/8T", "1/16", "1/16T", "1/32" };
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -108,6 +114,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add (std::make_unique<APF> (id ("chorus"), "Chorus", 0.0f, 1.0f, 0.25f));
     layout.add (std::make_unique<APF> (id ("delay"), "Delay", 0.0f, 1.0f, 0.30f));
     layout.add (std::make_unique<APF> (id ("delay_time"), "Delay Time", juce::NormalisableRange<float> (0.03f, 1.5f, 0.001f, 0.45f), 0.375f));
+    layout.add (std::make_unique<APB> (id ("delay_sync"), "Delay Sync", false));
+    layout.add (std::make_unique<APC> (id ("delay_division"), "Delay Division", delayDivisionNames(), 4));
     layout.add (std::make_unique<APF> (id ("delay_feedback"), "Delay Feedback", 0.0f, 0.95f, 0.35f));
     layout.add (std::make_unique<APF> (id ("reverb"), "Reverb", 0.0f, 1.0f, 0.35f));
     layout.add (std::make_unique<APF> (id ("reverb_size"), "Reverb Size", 0.0f, 1.0f, 0.60f));

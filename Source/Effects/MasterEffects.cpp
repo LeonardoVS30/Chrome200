@@ -6,6 +6,8 @@ void MasterEffects::prepare (double sampleRate, int maxBlockSize)
 {
     rate = sampleRate;
     juce::dsp::ProcessSpec stereo { sampleRate, static_cast<juce::uint32> (maxBlockSize), 2 };
+    delay.setMaximumDelayInSamples (juce::roundToInt (sampleRate * 12.0) + 1);
+    maximumDelaySamples = static_cast<float> (delay.getMaximumDelayInSamples());
     chorus.prepare (stereo); delay.prepare (stereo); reverb.prepare (stereo);
     compressor.prepare (stereo); limiter.prepare (stereo);
     juce::dsp::ProcessSpec mono { sampleRate, static_cast<juce::uint32> (maxBlockSize), 1 };
@@ -46,7 +48,7 @@ void MasterEffects::process (juce::AudioBuffer<float>& buffer, const MasterContr
     chorus.setMix (c.chorus);
     chorus.process (juce::dsp::ProcessContextReplacing<float> (block));
 
-    delay.setDelay (static_cast<float> (rate) * c.delayTime);
+    delay.setDelay (juce::jlimit (1.0f, maximumDelaySamples, static_cast<float> (rate) * c.delayTime));
     const auto feedback = c.delayFeedback;
     for (int i = 0; i < buffer.getNumSamples(); ++i)
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)

@@ -107,7 +107,8 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
 
             const auto low = static_cast<double> (juce::jmin (settings.start, settings.end) * static_cast<float> (source->length() - 1));
             const auto high = static_cast<double> (juce::jmax (settings.start, settings.end) * static_cast<float> (source->length() - 1));
-            if (high - low < 2.0)
+            const auto range = high - low;
+            if (range < 2.0)
                 continue;
 
             const auto semitones = glideNote - 60.0 + static_cast<double> (settings.tune);
@@ -118,17 +119,48 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
             const auto leftGain = settings.gain * std::sqrt (0.5f * (1.0f - settings.pan));
             const auto rightGain = settings.gain * std::sqrt (0.5f * (1.0f + settings.pan));
             const auto p = positions[slot];
-            outputs[slot]->addSample (0, startSample + frame, source->sample (0, p) * amp * leftGain);
-            outputs[slot]->addSample (1, startSample + frame, source->sample (source->channels() > 1 ? 1 : 0, p) * amp * rightGain);
+            const auto crossfadeLength = settings.loop
+                                           ? juce::jmin (source->sampleRate() * 0.005, range * 0.20)
+                                           : 0.0;
+            const auto loopSample = [&] (int channel)
+            {
+                const auto primary = source->sample (channel, p);
+                if (crossfadeLength < 2.0)
+                    return primary;
+
+                if (! settings.reverse)
+                {
+                    const auto crossfadeStart = high - crossfadeLength;
+                    if (p >= crossfadeStart)
+                    {
+                        const auto mix = juce::jlimit (0.0, 1.0, (p - crossfadeStart) / crossfadeLength);
+                        const auto wrappedPosition = low + (p - crossfadeStart);
+                        return static_cast<float> (primary + (source->sample (channel, wrappedPosition) - primary) * mix);
+                    }
+                }
+                else
+                {
+                    const auto crossfadeEnd = low + crossfadeLength;
+                    if (p <= crossfadeEnd)
+                    {
+                        const auto mix = juce::jlimit (0.0, 1.0, (crossfadeEnd - p) / crossfadeLength);
+                        const auto wrappedPosition = high - crossfadeLength + (p - low);
+                        return static_cast<float> (primary + (source->sample (channel, wrappedPosition) - primary) * mix);
+                    }
+                }
+                return primary;
+            };
+            outputs[slot]->addSample (0, startSample + frame, loopSample (0) * amp * leftGain);
+            outputs[slot]->addSample (1, startSample + frame, loopSample (source->channels() > 1 ? 1 : 0) * amp * rightGain);
             positions[slot] += increment;
 
             if (positions[slot] < low || positions[slot] >= high)
             {
                 if (settings.loop)
                 {
-                    const auto range = high - low;
-                    while (positions[slot] >= high) positions[slot] -= range;
-                    while (positions[slot] < low) positions[slot] += range;
+                    const auto loopSpan = range - crossfadeLength;
+                    while (positions[slot] >= high) positions[slot] -= loopSpan;
+                    while (positions[slot] < low) positions[slot] += loopSpan;
                 }
                 else
                 {

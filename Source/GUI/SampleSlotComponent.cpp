@@ -33,7 +33,7 @@ SampleSlotComponent::SampleSlotComponent (juce::AudioProcessorValueTreeState& pa
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, params::slotId (slot, "solo"), solo));
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, params::slotId (slot, "mute"), mute));
     buttonAttachments.push_back (std::make_unique<ButtonAttachment> (state, params::slotId (slot, "enabled"), power));
-    for (auto* button : { &loop, &reverse, &solo, &mute })
+    for (auto* button : { &loop, &reverse, &solo, &mute, &power })
         button->onStateChange = [this] { repaint(); };
     browse.onClick = [this] { chooseFile(); };
     setWantsKeyboardFocus (false);
@@ -44,31 +44,7 @@ void SampleSlotComponent::configureKnob (juce::Slider& slider, const juce::Strin
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setName (tooltip);
-    auto updateTooltip = [&slider, suffix, tooltip]
-    {
-        juce::String value;
-        if (suffix == "gain")
-            value = juce::String (slider.getValue(), 1) + " dB";
-        else if (suffix == "start" || suffix == "end")
-            value = juce::String (slider.getValue() * 100.0, 2) + " %";
-        else
-            value = juce::String (slider.getValue(), 2);
-        slider.setTooltip (tooltip + ": " + value);
-    };
-    updateTooltip();
-    auto* sliderPointer = &slider;
-    slider.onValueChange = [this, sliderPointer, suffix, tooltip]
-    {
-        juce::String value;
-        if (suffix == "gain")
-            value = juce::String (sliderPointer->getValue(), 1) + " dB";
-        else if (suffix == "start" || suffix == "end")
-            value = juce::String (sliderPointer->getValue() * 100.0, 2) + " %";
-        else
-            value = juce::String (sliderPointer->getValue(), 2);
-        sliderPointer->setTooltip (tooltip + ": " + value);
-        repaint();
-    };
+    slider.onValueChange = [this] { repaint(); };
     sliderAttachments.push_back (std::make_unique<SliderAttachment> (state, params::slotId (slotIndex, suffix), slider));
 }
 
@@ -131,10 +107,21 @@ void SampleSlotComponent::paint (juce::Graphics& g)
                         "S", solo.getToggleState());
         drawSmallState (slotRect (smallStateX[index], smallStateY[index] + 50.0f, 40.5f, 41.5f),
                         "M", mute.getToggleState());
-        if (params::load (state, params::slotId (slotIndex, "enabled")) < 0.5f)
+        const auto enabled = params::load (state, params::slotId (slotIndex, "enabled")) >= 0.5f;
+        const auto ledMask = slotRect (24.0f, 20.0f, 30.0f, 30.0f);
+        g.setColour (juce::Colour (0xffb5b3b2));
+        g.fillEllipse (ledMask);
+        if (enabled)
         {
-            g.setColour (juce::Colour (0xaa000000));
-            g.fillEllipse (slotRect (24.0f, 20.0f, 30.0f, 30.0f));
+            g.setColour (juce::Colour (0x405f91e8));
+            g.fillEllipse (slotRect (25.0f, 23.0f, 22.0f, 22.0f));
+            g.setColour (juce::Colour (0xff82adf4));
+            g.fillEllipse (slotRect (29.0f, 27.0f, 14.0f, 14.0f));
+        }
+        else
+        {
+            g.setColour (juce::Colour (0xff626568));
+            g.fillEllipse (slotRect (30.0f, 28.0f, 12.0f, 12.0f));
         }
         return;
     }

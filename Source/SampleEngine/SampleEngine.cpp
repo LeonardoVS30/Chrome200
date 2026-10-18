@@ -72,6 +72,7 @@ void SampleEngine::reset()
     randomModulation = 0.0f;
     lastModes.fill (-1);
     modeFadeSamples.fill (0);
+    characterInputActive.fill (false);
     for (auto& buffer : modeDryBuffers) buffer.clear();
     {
         const juce::ScopedLock lock (metadataLock);
@@ -314,6 +315,7 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
             digital[static_cast<size_t> (slot)].reset();
             lastModes[static_cast<size_t> (slot)] = -1;
             modeFadeSamples[static_cast<size_t> (slot)] = 0;
+            characterInputActive[static_cast<size_t> (slot)] = false;
             continue;
         }
         const auto mode = juce::jlimit (0, 2, static_cast<int> (
@@ -328,7 +330,23 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
             digital[static_cast<size_t> (slot)].reset();
             lastModes[static_cast<size_t> (slot)] = mode;
             modeFadeSamples[static_cast<size_t> (slot)] = 128;
+            characterInputActive[static_cast<size_t> (slot)] = false;
         }
+        const auto dryPeak = buffer.getMagnitude (0, frames);
+        auto& characterActive = characterInputActive[static_cast<size_t> (slot)];
+        if (mode < 2 && dryPeak <= 1.0e-7f)
+        {
+            buffer.clear();
+            if (characterActive)
+            {
+                vintage[static_cast<size_t> (slot)].reset();
+                chrome[static_cast<size_t> (slot)].reset();
+                characterActive = false;
+            }
+            continue;
+        }
+        characterActive = mode < 2;
+
         if (mode == 0) vintage[static_cast<size_t> (slot)].process (buffer, 0.72f);
         else if (mode == 1) chrome[static_cast<size_t> (slot)].process (buffer, controls);
         else digital[static_cast<size_t> (slot)].process (buffer, controls.density, controls.fragment);
@@ -358,15 +376,22 @@ void SampleEngine::process (juce::AudioBuffer<float>& output, juce::MidiBuffer& 
     const auto chorusOn = params::load (state, "chorus_enabled") > 0.5f;
     const auto delayOn = params::load (state, "delay_enabled") > 0.5f;
     const auto reverbOn = params::load (state, "reverb_enabled") > 0.5f;
+    auto delayTime = params::load (state, "delay_time");
+    if (params::load (state, "delay_sync") > 0.5f)
+    {
+        const auto bpm = currentBpm.load (std::memory_order_relaxed);
+        const auto division = static_cast<int> (params::load (state, "delay_division"));
+        delayTime = 60.0f / juce::jmax (20.0f, bpm) * params::delayDivisionQuarterNotes (division);
+    }
     master.process (output, { juce::jlimit (0.0f, 1.0f, chorusOn ? (params::load (state, "chorus") + fxMod) : 0.0f),
                                juce::jlimit (0.0f, 1.0f, delayOn ? (params::load (state, "delay") + fxMod) : 0.0f),
-                               params::load (state, "delay_time"), params::load (state, "delay_feedback"),
+                                delayTime, params::load (state, "delay_feedback"),
                                juce::jlimit (0.0f, 1.0f, reverbOn ? (params::load (state, "reverb") + fxMod) : 0.0f),
                               params::load (state, "reverb_size"), params::load (state, "reverb_damp"),
                               params::load (state, "compressor"), params::load (state, "width"), params::load (state, "eq_low"),
                               params::load (state, "eq_high"), params::load (state, "master_input_gain"), params::load (state, "master_gain"), params::load (state, "soft_clip") > 0.5f,
                               static_cast<int> (params::load (state, "oversampling")) });
-    const auto currentPeak = juce::jmax (output.getMagnitude (0, frames), output.getNumChannels() > 1 ? output.getMagnitude (1, frames) : 0.0f);
+    const auto currentPeak = output.getMagnitude (0, frames);
     peak.store (juce::jmax (currentPeak, peak.load() * 0.92f), std::memory_order_relaxed);
     bool anyActive = false;
     for (const auto& v : voices) if (v.active()) { anyActive = true; break; }

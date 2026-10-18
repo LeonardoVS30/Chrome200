@@ -28,12 +28,19 @@ void drawMicrograin (juce::Graphics& g, juce::Rectangle<float> bounds, float spa
 }
 }
 
+double Chrome2000AudioProcessorEditor::BoundKnob::ParameterSlider::snapValue (double attemptedValue, DragMode dragMode)
+{
+    if (snapToSemitones && dragMode != notDragging)
+        return std::round (attemptedValue);
+    return attemptedValue;
+}
+
 Chrome2000AudioProcessorEditor::BoundKnob::BoundKnob (juce::AudioProcessorValueTreeState& state,
                                                        const juce::String& id,
                                                        const juce::String& name,
                                                        bool large,
                                                        bool glow)
-    : parameterId (id), attachment (state, id, slider)
+    : state (state), parameterId (id), displayName (name.trim())
 {
     label.setText (name, juce::dontSendNotification);
     label.setJustificationType (juce::Justification::centred);
@@ -46,9 +53,12 @@ Chrome2000AudioProcessorEditor::BoundKnob::BoundKnob (juce::AudioProcessorValueT
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.getProperties().set ("bigKnob", large);
     slider.getProperties().set ("glowKnob", glow);
+    slider.snapToSemitones = parameterId == "global_pitch";
     slider.addListener (this);
+    slider.addMouseListener (this, false);
     slider.onDragStart = [this] { if (onDragStart) onDragStart(); };
     slider.onDragEnd = [this] { if (onDragEnd) onDragEnd(); };
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, slider);
     addAndMakeVisible (label);
     addAndMakeVisible (value);
     addAndMakeVisible (slider);
@@ -58,6 +68,77 @@ Chrome2000AudioProcessorEditor::BoundKnob::BoundKnob (juce::AudioProcessorValueT
         value.setVisible (false);
     }
     updateValue();
+}
+
+void Chrome2000AudioProcessorEditor::BoundKnob::bindToParameter (const juce::String& id)
+{
+    if (parameterId == id)
+        return;
+
+    attachment.reset();
+    parameterId = id;
+    slider.snapToSemitones = parameterId == "global_pitch";
+    attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (state, id, slider);
+    updateValue();
+}
+
+void Chrome2000AudioProcessorEditor::BoundKnob::mouseDown (const juce::MouseEvent& event)
+{
+    if (event.mods.isPopupMenu())
+        showValueEditor();
+}
+
+double Chrome2000AudioProcessorEditor::BoundKnob::valueFromText (juce::String text) const
+{
+    text = text.trim().toLowerCase();
+    if (parameterId == "delay_division")
+    {
+        const auto index = chrome::params::delayDivisionNames().indexOf (text, true);
+        if (index >= 0)
+            return static_cast<double> (index);
+    }
+    auto result = text.getDoubleValue();
+    if (parameterId == "filter_cutoff" && text.contains ("khz"))
+        result *= 1000.0;
+    else if (parameterId == "delay_time" || parameterId == "glide")
+    {
+        if (! text.endsWithChar ('s') || text.endsWith ("ms"))
+            result *= 0.001;
+    }
+    else if ((parameterId == "chorus" || parameterId == "delay" || parameterId == "delay_feedback"
+              || parameterId == "reverb" || parameterId == "reverb_size" || parameterId == "reverb_damp"
+              || parameterId == "morph_y" || (parameterId.startsWith ("lfo") && parameterId.endsWith ("_depth")))
+             && (text.containsChar ('%') || std::abs (result) > 1.0))
+        result *= 0.01;
+    return juce::jlimit (slider.getMinimum(), slider.getMaximum(), result);
+}
+
+void Chrome2000AudioProcessorEditor::BoundKnob::showValueEditor()
+{
+    auto title = displayName.isNotEmpty() ? displayName : parameterId.replaceCharacter ('_', ' ').toUpperCase();
+    auto hint = juce::String ("Enter a value");
+    if (parameterId == "global_pitch") hint << " in semitones";
+    else if (parameterId == "delay_time" || parameterId == "glide") hint << " in milliseconds (or append s)";
+    else if (parameterId == "delay_division") hint << " as a fraction, for example 1/4 or 1/8T";
+
+    auto window = std::make_unique<juce::AlertWindow> (title, hint, juce::MessageBoxIconType::NoIcon);
+    const auto divisionNames = chrome::params::delayDivisionNames();
+    const auto editorValue = parameterId == "delay_time" || parameterId == "glide"
+                               ? juce::String (slider.getValue() * 1000.0, 1)
+                               : parameterId == "delay_division"
+                                   ? divisionNames[juce::jlimit (0, divisionNames.size() - 1, juce::roundToInt (slider.getValue()))]
+                                   : juce::String (slider.getValue(), 3);
+    window->addTextEditor ("value", editorValue);
+    window->addButton ("Set", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    const auto safe = juce::Component::SafePointer<BoundKnob> (this);
+    auto* raw = window.release();
+    raw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, raw] (int result)
+    {
+        std::unique_ptr<juce::AlertWindow> owner (raw);
+        if (safe != nullptr && result == 1)
+            safe->slider.setValue (safe->valueFromText (raw->getTextEditorContents ("value")), juce::sendNotificationSync);
+    }), false);
 }
 
 void Chrome2000AudioProcessorEditor::BoundKnob::resized()
@@ -114,24 +195,29 @@ void Chrome2000AudioProcessorEditor::BoundKnob::updateValue()
         text = juce::String (v, 2) + " st";
     else if (parameterId == "global_fine")
         text = juce::String (v, 2) + " ct";
+    else if (parameterId == "morph_y")
+        text = juce::String (v * 100.0, 0) + " %";
     else if (parameterId == "glide")
         text = juce::String (v * 1000.0, 0) + " ms";
-    else if (parameterId == "lfo1_rate")
+    else if (parameterId.startsWith ("lfo") && parameterId.endsWith ("_rate"))
         text = std::abs (v - 1.0) < 0.01 ? "1/4" : juce::String (v, 2) + " Hz";
     else if (parameterId == "delay_time")
-        text = std::abs (v - 0.375) < 0.01 ? "1/4" : juce::String (v * 1000.0, 0) + " ms";
+        text = juce::String (v * 1000.0, 0) + " ms";
+    else if (parameterId == "delay_division")
+    {
+        const auto names = chrome::params::delayDivisionNames();
+        text = names[juce::jlimit (0, names.size() - 1, juce::roundToInt (v))];
+    }
     else if (parameterId.contains ("gain"))
         text = juce::String (v, 1) + " dB";
     else if (parameterId == "chorus" || parameterId == "delay" || parameterId == "delay_feedback"
              || parameterId == "reverb" || parameterId == "reverb_size" || parameterId == "reverb_damp"
-             || parameterId == "lfo1_depth")
+             || (parameterId.startsWith ("lfo") && parameterId.endsWith ("_depth")))
         text = juce::String (v * 100.0, 0) + " %";
     else
         text = juce::String (v, 2);
     value.setText (text, juce::dontSendNotification);
     valueText = text;
-    slider.setTooltip ((label.getText().isNotEmpty() ? label.getText() : parameterId)
-                       + ": " + text);
 }
 
 void Chrome2000AudioProcessorEditor::ValueBubble::paint (juce::Graphics& g)
@@ -244,13 +330,15 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
        chorusToggleAttachment (p.parameters, "chorus_enabled", chorusToggle),
        delayToggleAttachment (p.parameters, "delay_enabled", delayToggle),
        reverbToggleAttachment (p.parameters, "reverb_enabled", reverbToggle),
+       delaySyncAttachment (p.parameters, "delay_sync", delaySync),
       filterTypeAttachment (p.parameters, "filter_type", filterType),
       modulationSourceAttachment (p.parameters, "mod1_source", modulationSource),
       modulationDestinationAttachment (p.parameters, "mod1_destination", modulationDestination),
        lfoShapeAttachment (p.parameters, "lfo1_shape", lfoShape),
        lfo2ShapeAttachment (p.parameters, "lfo2_shape", lfo2Shape),
        lfo3ShapeAttachment (p.parameters, "lfo3_shape", lfo3Shape),
-      morphXAttachment (p.parameters, "morph_x", morphX)
+       delayDivisionAttachment (p.parameters, "delay_division", delayDivision),
+       morphXAttachment (p.parameters, "morph_x", morphX)
 {
     setLookAndFeel (&lookAndFeel);
     figmaSkin = juce::ImageFileFormat::loadFrom (
@@ -273,7 +361,7 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
               &filterType, &modulationSource, &modulationDestination, &lfoShape,
               &lfo2Shape, &lfo3Shape,
               &lfoDisplay, &morphX, &waveTab, &spectrumTab, &modTab, &legato,
-              &chorusToggle, &delayToggle, &reverbToggle })
+              &chorusToggle, &delayToggle, &reverbToggle, &delaySync, &delayDivision })
         addAndMakeVisible (component);
 
     next.setVisible (false);
@@ -284,8 +372,10 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
     logoHitArea.setAlwaysOnTop (true);
     logoHitArea.onClick = [this] { showAbout(); };
     power.setClickingTogglesState (true);
+    power.setComponentID ("powerButton");
     power.getProperties().set ("chromePower", true);
     power.setButtonText ({});
+    power.onStateChange = [this] { updatePowerState(); repaint(); };
     previous.setButtonText ("<");
     save.setButtonText ({});
     save.getProperties().set ("saveIcon", true);
@@ -293,27 +383,38 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
     modulationSource.addItemList ({ "OFF", "LFO 1", "LFO 2", "LFO 3", "VELOCITY", "AFTERTOUCH", "RANDOM", "AMP ENV", "MOD ENV", "LIQUID", "REFLECT", "FRAGMENT", "SHINE", "DENSITY", "FUSION" }, 1);
     modulationSource.getProperties().set ("darkCombo", true);
     modulationSource.setColour (juce::ComboBox::textColourId, juce::Colour (0xffeef0f3));
-    for (auto* c : { &lfo2Shape, &lfo3Shape })
-    {
-        c->getProperties().set ("darkCombo", true);
-        c->setColour (juce::ComboBox::textColourId, juce::Colour (0xffeef0f3));
-    }
     modulationDestination.addItemList ({ "PITCH", "CUTOFF", "POSITION", "GRAIN SIZE", "DENSITY", "MIX", "FX", "LIQUID", "REFLECT", "SHINE" }, 1);
     lfoShape.addItemList ({ "SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM", "S&H" }, 1);
     lfo2Shape.addItemList ({ "SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM", "S&H" }, 1);
     lfo3Shape.addItemList ({ "SINE", "TRIANGLE", "SAW", "SQUARE", "RANDOM", "S&H" }, 1);
+    delayDivision.addItemList (chrome::params::delayDivisionNames(), 1);
+    modulationSource.setComponentID ("modulationSource");
+    lfoShape.setComponentID ("lfo1Shape");
+    lfo2Shape.setComponentID ("lfo2Shape");
+    lfo3Shape.setComponentID ("lfo3Shape");
+    delayDivision.setComponentID ("delayDivision");
+    delaySync.setComponentID ("delaySync");
+    for (auto* combo : { &modulationDestination, &lfoShape, &lfo2Shape, &lfo3Shape })
+        combo->setColour (juce::ComboBox::textColourId, juce::Colour (0xff292b2e));
     filterType.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "filter_type")), juce::dontSendNotification);
     modulationSource.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "mod1_source")), juce::dontSendNotification);
     modulationDestination.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "mod1_destination")), juce::dontSendNotification);
     lfoShape.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "lfo1_shape")), juce::dontSendNotification);
     lfo2Shape.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "lfo2_shape")), juce::dontSendNotification);
     lfo3Shape.setSelectedItemIndex (static_cast<int> (chrome::params::load (p.parameters, "lfo3_shape")), juce::dontSendNotification);
+    modulationSource.onChange = [this] { updateModulationControls(); };
     morphX.setSliderStyle (juce::Slider::LinearHorizontal);
     morphX.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     morphX.setColour (juce::Slider::trackColourId, juce::Colour (0xff91b8f4));
     morphX.setColour (juce::Slider::thumbColourId, juce::Colour (0xfff7f8fa));
     legato.setClickingTogglesState (true);
+    chorusToggle.setComponentID ("chorusToggle");
+    delayToggle.setComponentID ("delayToggle");
+    reverbToggle.setComponentID ("reverbToggle");
     for (auto* t : { &chorusToggle, &delayToggle, &reverbToggle }) t->setClickingTogglesState (true);
+    delaySync.setClickingTogglesState (true);
+    delaySync.onStateChange = [this] { updateDelayControls(); repaint(); };
+    delayDivision.onChange = [this] { repaint(); };
 
     for (auto* tab : { &waveTab, &spectrumTab, &modTab })
     {
@@ -339,6 +440,7 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
     {
         auto knob = std::make_unique<BoundKnob> (p.parameters, id, name, large, glow);
         BoundKnob* raw = knob.get();
+        raw->setComponentID (id);
         knob->onDragStart = [this, raw] { activeDragKnob = raw; valueBubble.setText (raw->getValueText()); valueBubble.setVisible (true); valueBubble.toFront (false); };
         knob->onDragEnd = [this] { activeDragKnob = nullptr; valueBubble.setVisible (false); };
         destination.push_back (std::move (knob));
@@ -399,10 +501,15 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
     constexpr float hitTargetAlpha = 0.001f;
     for (auto* component : std::initializer_list<juce::Component*> {
               &subtitle, &presetBox, &previous, &save, &power, &credit,
-              &filterType, &modulationSource, &modulationDestination, &lfoShape,
+              &filterType, &modulationSource, &modulationDestination,
+              &lfoShape, &lfo2Shape, &lfo3Shape,
               &lfoDisplay, &morphX, &waveTab, &spectrumTab, &modTab, &legato,
-              &chorusToggle, &delayToggle, &reverbToggle })
+              &chorusToggle, &delayToggle, &reverbToggle, &delaySync, &delayDivision })
         component->setAlpha (hitTargetAlpha);
+
+    updateModulationControls();
+    updatePowerState();
+    updateDelayControls();
 
     addAndMakeVisible (aboutOverlay);
     aboutOverlay.setVisible (false);
@@ -431,36 +538,40 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
 
         const auto sx = static_cast<float> (getWidth()) / designWidth;
         const auto sy = static_cast<float> (getHeight()) / designHeight;
+        const auto sampleSkinAt = [this] (float x, float y)
+        {
+            const auto px = juce::jlimit (0, figmaSkin.getWidth() - 1,
+                                          juce::roundToInt (x * static_cast<float> (figmaSkin.getWidth()) / designWidth));
+            const auto py = juce::jlimit (0, figmaSkin.getHeight() - 1,
+                                          juce::roundToInt (y * static_cast<float> (figmaSkin.getHeight()) / designHeight));
+            int red = 0, green = 0, blue = 0, count = 0;
+            for (int dy = -2; dy <= 2; ++dy)
+                for (int dx = -2; dx <= 2; ++dx)
+                {
+                    const auto colour = figmaSkin.getPixelAt (juce::jlimit (0, figmaSkin.getWidth() - 1, px + dx),
+                                                              juce::jlimit (0, figmaSkin.getHeight() - 1, py + dy));
+                    red += colour.getRed();
+                    green += colour.getGreen();
+                    blue += colour.getBlue();
+                    ++count;
+                }
+            return juce::Colour (static_cast<juce::uint8> (red / count),
+                                 static_cast<juce::uint8> (green / count),
+                                 static_cast<juce::uint8> (blue / count));
+        };
+        const auto fillSkinBackground = [&] (float x, float y, float width, float height)
+        {
+            const auto rect = designRect (*this, x, y, width, height);
+            g.setGradientFill (juce::ColourGradient (sampleSkinAt (x - 6.0f, y + height * 0.5f),
+                                                     rect.getX(), rect.getCentreY(),
+                                                     sampleSkinAt (x + width + 6.0f, y + height * 0.5f),
+                                                     rect.getRight(), rect.getCentreY(), false));
+            g.fillRect (rect);
+        };
 
         chrome::WaveformComponent::ViewMode viewMode = chrome::WaveformComponent::ViewMode::wave;
         if (spectrumTab.getToggleState()) viewMode = chrome::WaveformComponent::ViewMode::spectrum;
         else if (modTab.getToggleState()) viewMode = chrome::WaveformComponent::ViewMode::modulation;
-
-        // Persistent value readouts under each knob (FL Studio style), masking the
-        // baked-in numbers of the Figma skin with the sampled panel colour.
-        auto sampleSkin = [this] (juce::Point<int> p) -> juce::Colour
-        {
-            if (! figmaSkin.isValid()) return juce::Colour (0xffc4c2c1);
-            const int sxp = juce::jlimit (0, figmaSkin.getWidth() - 1,
-                                          static_cast<int> (static_cast<float> (p.x) * static_cast<float> (figmaSkin.getWidth()) / static_cast<float> (juce::jmax (1, getWidth()))));
-            const int syp = juce::jlimit (0, figmaSkin.getHeight() - 1,
-                                          static_cast<int> (static_cast<float> (p.y) * static_cast<float> (figmaSkin.getHeight()) / static_cast<float> (juce::jmax (1, getHeight()))));
-            float r = 0.0f, g = 0.0f, b = 0.0f, a = 0.0f;
-            int count = 0;
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx)
-                {
-                    const int px = juce::jlimit (0, figmaSkin.getWidth() - 1, sxp + dx);
-                    const int py = juce::jlimit (0, figmaSkin.getHeight() - 1, syp + dy);
-                    const auto pp = figmaSkin.getPixelAt (px, py);
-                    r += pp.getFloatRed(); g += pp.getFloatGreen(); b += pp.getFloatBlue(); a += pp.getFloatAlpha();
-                    ++count;
-                }
-            return juce::Colour (static_cast<juce::uint8> (r / count * 255.0f),
-                                 static_cast<juce::uint8> (g / count * 255.0f),
-                                 static_cast<juce::uint8> (b / count * 255.0f),
-                                 static_cast<juce::uint8> (a / count * 255.0f));
-        };
 
         // Replace the three illustrative Figma sample previews with the actual
         // engine state. This is the only intentionally dynamic area of the skin.
@@ -607,23 +718,23 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 const auto vsx = juce::jmin (sx, sy);
                 // START
                 {
-                    auto r = designRect (*this, slotX[static_cast<size_t> (slot)] + 23.0f * xs,
-                                          624.0f, 140.0f * xs, 27.0f);
-                     const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "start"));
-                     g.setColour (juce::Colour (0xff797b7b));
-                     g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
-                     g.setColour (juce::Colour (0xff292b2e));
+                    const auto x = slotX[static_cast<size_t> (slot)] + 23.0f * xs;
+                    const auto width = 140.0f * xs;
+                    auto r = designRect (*this, x, 624.0f, width, 27.0f);
+                    const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "start"));
+                    fillSkinBackground (x, 624.0f, width, 27.0f);
+                    g.setColour (juce::Colour (0xff292b2e));
                     g.setFont (juce::FontOptions (21.5f * sy));
                     g.drawFittedText (juce::String (v * 100.0, 2) + " %", r.getSmallestIntegerContainer(), juce::Justification::centred, 1);
                 }
                 // END
                 {
-                    auto r = designRect (*this, slotX[static_cast<size_t> (slot)] + 193.0f * xs,
-                                          624.0f, 140.0f * xs, 27.0f);
-                     const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "end"));
-                     g.setColour (juce::Colour (0xff797b7b));
-                     g.fillRoundedRectangle (r.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
-                     g.setColour (juce::Colour (0xff292b2e));
+                    const auto x = slotX[static_cast<size_t> (slot)] + 193.0f * xs;
+                    const auto width = 140.0f * xs;
+                    auto r = designRect (*this, x, 624.0f, width, 27.0f);
+                    const auto v = chrome::params::load (processor.parameters, chrome::params::slotId (slot, "end"));
+                    fillSkinBackground (x, 624.0f, width, 27.0f);
+                    g.setColour (juce::Colour (0xff292b2e));
                     g.setFont (juce::FontOptions (21.5f * sy));
                     g.drawFittedText (juce::String (v * 100.0, 2) + " %", r.getSmallestIntegerContainer(), juce::Justification::centred, 1);
                 }
@@ -643,53 +754,102 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
 
         // Tabs: neutralise baked highlight, show active tab in skin style.
         {
+            const auto tabMask = designRect (*this, 90.0f, 1565.0f, 590.0f, 68.0f);
+            const auto footerTop = designRect (*this, 0.0f, 1562.0f, 1.0f, 1.0f).getY();
+            const auto footerBottom = designRect (*this, 0.0f, 1631.0f, 1.0f, 1.0f).getY();
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff626467), tabMask.getX(), footerTop,
+                                                     juce::Colour (0xff34363a), tabMask.getX(), footerBottom, false));
+            g.fillRect (tabMask);
             const std::array<juce::Rectangle<int>, 3> tabRects {
-                designRect (*this, 130.0f, 1577.0f, 160.0f, 49.0f).getSmallestIntegerContainer(),
-                designRect (*this, 309.0f, 1577.0f, 173.0f, 49.0f).getSmallestIntegerContainer(),
-                designRect (*this, 499.0f, 1577.0f, 160.0f, 49.0f).getSmallestIntegerContainer() };
+                designRect (*this, 112.0f, 1571.0f, 164.0f, 54.0f).getSmallestIntegerContainer(),
+                designRect (*this, 299.0f, 1577.0f, 164.0f, 49.0f).getSmallestIntegerContainer(),
+                designRect (*this, 488.0f, 1577.0f, 162.0f, 49.0f).getSmallestIntegerContainer() };
             const std::array<juce::TextButton*, 3> tabs { &waveTab, &spectrumTab, &modTab };
             const std::array<juce::String, 3> labels { "WAVE", "SPECTRUM", "MOD" };
             for (int i = 0; i < 3; ++i)
             {
-                g.setColour (juce::Colour (0xff4e4f53));
-                g.fillRoundedRectangle (tabRects[static_cast<size_t> (i)].toFloat(), 8.0f * juce::jmin (sx, sy));
-                if (tabs[static_cast<size_t> (i)]->getToggleState())
-                {
-                    auto b = tabRects[static_cast<size_t> (i)].toFloat();
-                    juce::ColourGradient fill (juce::Colour (0xff526f9f), b.getX(), b.getY(),
-                                               juce::Colour (0xff273b5d), b.getX(), b.getBottom(), false);
-                    g.setGradientFill (fill);
-                    g.fillRoundedRectangle (b, 7.0f * juce::jmin (sx, sy));
-                    g.setColour (juce::Colour (0xff9fc2ff));
-                    g.drawRoundedRectangle (b, 7.0f * juce::jmin (sx, sy), 1.25f * juce::jmin (sx, sy));
-                }
+                const auto active = tabs[static_cast<size_t> (i)]->getToggleState();
+                auto b = tabRects[static_cast<size_t> (i)].toFloat();
+                g.setColour (juce::Colour (0x66000000));
+                g.fillRoundedRectangle (b.translated (0.0f, 1.5f * sy), 7.0f * juce::jmin (sx, sy));
+                g.setGradientFill (juce::ColourGradient (active ? juce::Colour (0xff526f9f) : juce::Colour (0xff4c4d50),
+                                                         b.getX(), b.getY(),
+                                                         active ? juce::Colour (0xff273b5d) : juce::Colour (0xff27292c),
+                                                         b.getX(), b.getBottom(), false));
+                g.fillRoundedRectangle (b, 7.0f * juce::jmin (sx, sy));
+                g.setColour (active ? juce::Colour (0xff9fc2ff) : juce::Colour (0xff73767a));
+                g.drawRoundedRectangle (b, 7.0f * juce::jmin (sx, sy),
+                                        (active ? 1.25f : 0.8f) * juce::jmin (sx, sy));
                 g.setColour (juce::Colour (0xffd8dadd));
                 g.setFont (juce::FontOptions (19.5f * sy, juce::Font::bold));
                 g.drawFittedText (labels[static_cast<size_t> (i)], tabRects[static_cast<size_t> (i)], juce::Justification::centred, 1);
             }
         }
 
-        // X-FADE: mask the baked static pill and redraw it at the live morph_x position.
+        // X-FADE: redraw the complete right side of the tray so the baked pill
+        // cannot remain visible when the live value moves.
         {
+            const auto footerTop = designRect (*this, 0.0f, 1562.0f, 1.0f, 1.0f).getY();
+            const auto footerBottom = designRect (*this, 0.0f, 1631.0f, 1.0f, 1.0f).getY();
+            const auto xfadeMask = designRect (*this, 675.0f, 1565.0f, 1570.0f, 68.0f);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff626467), xfadeMask.getX(), footerTop,
+                                                     juce::Colour (0xff34363a), xfadeMask.getX(), footerBottom, false));
+            g.fillRect (xfadeMask);
+
             const auto track = designRect (*this, 730.0f, 1585.0f, 1430.0f, 46.0f);
-            // Mask the baked pill location.
-            g.setColour (juce::Colour (0xff434547));
-            g.fillRoundedRectangle (designRect (*this, 1345.0f, 1619.0f, 84.0f, 15.0f), 7.0f * juce::jmin (sx, sy));
+            const auto lineY = designRect (*this, 0.0f, 1611.0f, 1.0f, 1.0f).getY();
+            g.setColour (juce::Colour (0xff292b2e));
+            g.drawLine (track.getX(), lineY, track.getRight(), lineY, 4.0f * sy);
+            g.setColour (juce::Colour (0xffd8dadd));
+            g.setFont (juce::FontOptions (19.5f * sy, juce::Font::bold));
+            g.drawText ("X-FADE", designRect (*this, 1260.0f, 1562.0f, 250.0f, 24.0f), juce::Justification::centred);
+            g.drawText ("A", designRect (*this, 681.0f, 1580.0f, 50.0f, 40.0f), juce::Justification::centred);
+            g.drawText ("B", designRect (*this, 2192.0f, 1580.0f, 50.0f, 40.0f), juce::Justification::centred);
             const auto v = chrome::params::load (processor.parameters, "morph_x");
             const float pw = 84.0f * juce::jmin (sx, sy);
             const float ph = 15.0f * juce::jmin (sx, sy);
             const float px = track.getX() + track.getWidth() * v - pw * 0.5f;
-            const float py = designRect (*this, 0.0f, 1619.0f, 1.0f, 15.0f).getY();
+            const float py = lineY - ph * 0.5f;
+            g.setColour (juce::Colour (0x66000000));
+            g.fillRoundedRectangle (px, py + 4.0f * sy, pw, ph, 7.0f * juce::jmin (sx, sy));
             g.setColour (juce::Colour (0xff9ba6b9));
             g.fillRoundedRectangle (px, py, pw, ph, 7.0f * juce::jmin (sx, sy));
+
+            // Remove the lower shadow baked into the skin at its original
+            // centre position; only the live shadow above follows the pill.
+            const auto staleShadow = designRect (*this, 1290.0f, 1633.0f, 310.0f, 14.0f);
+            g.setGradientFill (juce::ColourGradient (sampleSkinAt (1000.0f, 1633.0f), staleShadow.getX(), staleShadow.getY(),
+                                                     sampleSkinAt (1000.0f, 1647.0f), staleShadow.getX(), staleShadow.getBottom(), false));
+            g.fillRect (staleShadow);
+        }
+
+        // Delay time mode: the transparent controls above this painted layer
+        // switch between a free millisecond value and host-tempo divisions.
+        {
+            const auto sync = chrome::params::load (processor.parameters, "delay_sync") > 0.5f;
+            const auto bounds = designRect (*this, 972.0f, 1306.0f, 94.0f, 28.0f);
+            g.setColour (juce::Colour (0x30000000));
+            g.fillRoundedRectangle (bounds.translated (0.0f, 1.5f * sy), 7.0f * juce::jmin (sx, sy));
+            g.setGradientFill (juce::ColourGradient (sync ? juce::Colour (0xd96f98d9) : juce::Colour (0xb8e4e7eb),
+                                                     bounds.getX(), bounds.getY(),
+                                                     sync ? juce::Colour (0xd9365686) : juce::Colour (0xb8aeb3ba),
+                                                     bounds.getX(), bounds.getBottom(), false));
+            g.fillRoundedRectangle (bounds, 7.0f * juce::jmin (sx, sy));
+            g.setColour (sync ? juce::Colour (0xfff5f8ff) : juce::Colour (0xff3f4246));
+            g.setFont (juce::FontOptions (15.0f * sy, juce::Font::bold));
+            g.drawText ("SYNC", bounds, juce::Justification::centred);
         }
 
         // Live ADSR graph overlay (mask baked, draw from amp params).
         {
-            const auto gArea = designRect (*this, 116.0f, 1023.0f, 772.0f, 158.0f);
-            g.setColour (juce::Colour (0xff3c3e45));
-            g.fillRoundedRectangle (gArea, 14.0f * juce::jmin (sx, sy));
-            auto eg = gArea.reduced (static_cast<int> (10.0f * juce::jmin (sx, sy)));
+            const auto gArea = designRect (*this, 103.0f, 1050.0f, 782.0f, 132.0f);
+            const auto graphScale = juce::jmin (sx, sy);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff55575a), gArea.getX(), gArea.getY(),
+                                                     juce::Colour (0xff303236), gArea.getX(), gArea.getBottom(), false));
+            g.fillRoundedRectangle (gArea, 14.0f * graphScale);
+            g.setColour (juce::Colour (0xff8c8f93));
+            g.drawRoundedRectangle (gArea, 14.0f * graphScale, 1.0f * graphScale);
+            auto eg = gArea.reduced (10.0f * graphScale);
             const auto a = chrome::params::load (processor.parameters, "amp_attack");
             const auto d = chrome::params::load (processor.parameters, "amp_decay");
             const auto s = chrome::params::load (processor.parameters, "amp_sustain");
@@ -707,20 +867,32 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
             env.lineTo (eg.getX() + eg.getWidth() * xs, sustainY);
             env.lineTo (eg.getRight(), eg.getBottom());
             g.setColour (juce::Colour (0xff9fc1f7));
-            g.strokePath (env, juce::PathStrokeType (1.5f * juce::jmin (sx, sy)));
+            g.strokePath (env, juce::PathStrokeType (5.0f * graphScale));
         }
 
         // Live LFO graph overlay (mask baked, draw from lfo1_shape).
         {
-            const auto lArea = designRect (*this, 1535.0f, 1024.0f, 774.0f, 158.0f);
-            g.setColour (juce::Colour (0xff56575f));
-            g.fillRoundedRectangle (lArea, 9.0f * juce::jmin (sx, sy));
-            const auto shape = static_cast<int> (chrome::params::load (processor.parameters, "lfo1_shape"));
-            auto b = lArea.reduced (static_cast<int> (4.0f * juce::jmin (sx, sy)));
+            const auto lArea = designRect (*this, 1536.0f, 1044.0f, 785.0f, 132.0f);
+            const auto graphScale = juce::jmin (sx, sy);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff57595c), lArea.getX(), lArea.getY(),
+                                                     juce::Colour (0xff34363a), lArea.getX(), lArea.getBottom(), false));
+            g.fillRoundedRectangle (lArea, 9.0f * graphScale);
+            g.setColour (juce::Colour (0xff8f9296));
+            g.drawRoundedRectangle (lArea, 9.0f * graphScale, 0.8f * graphScale);
+            const auto source = modulationSource.getSelectedItemIndex();
+            const juce::String lfoPrefix = source == 2 ? "lfo2_" : source == 3 ? "lfo3_" : "lfo1_";
+            const auto shape = static_cast<int> (chrome::params::load (processor.parameters, lfoPrefix + "shape"));
+            const auto rate = chrome::params::load (processor.parameters, lfoPrefix + "rate");
+            const auto amount = chrome::params::load (processor.parameters, lfoPrefix + "depth");
+            const auto phaseOffset = chrome::params::load (processor.parameters, lfoPrefix + "phase");
+            auto b = lArea.reduced (7.0f * graphScale);
             juce::Path wave;
             for (int x = 0; x <= b.getWidth(); ++x)
             {
-                const auto phase = static_cast<float> (x) / static_cast<float> (juce::jmax (1, (int) b.getWidth())) * 3.0f;
+                // The graph represents one second: rate controls cycle count and
+                // depth controls the physical vertical excursion.
+                const auto phase = static_cast<float> (x) / static_cast<float> (juce::jmax (1, (int) b.getWidth()))
+                                 * rate + phaseOffset;
                 float value = 0.0f;
                 const auto unit = phase - std::floor (phase);
                 if (shape == 0) value = std::sin (phase * juce::MathConstants<float>::twoPi);
@@ -728,105 +900,252 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                 else if (shape == 2) value = unit * 2.0f - 1.0f;
                 else if (shape == 3) value = unit < 0.5f ? 1.0f : -1.0f;
                 else value = std::sin (phase * 9.73f) * 0.75f;
-                const auto y = b.getCentreY() - value * b.getHeight() * 0.36f;
+                const auto y = b.getCentreY() - value * b.getHeight() * 0.40f * amount;
                 if (x == 0) wave.startNewSubPath (static_cast<float> (b.getX() + x), y);
                 else wave.lineTo (static_cast<float> (b.getX() + x), y);
             }
             g.setColour (juce::Colour (0xffa4c6ff));
-            g.strokePath (wave, juce::PathStrokeType (1.45f * juce::jmin (sx, sy)));
+            g.strokePath (wave, juce::PathStrokeType (5.0f * graphScale));
         }
 
-        // Effect enable state (dim icon when disabled).
+        // MODULATION selectors: preserve the Figma control language while the
+        // transparent ComboBoxes continue to provide menus and automation.
         {
-            const std::array<juce::Rectangle<int>, 3> iconRects {
-                designBounds (*this, 139.0f, 1311.0f, 26.0f, 26.0f),
-                designBounds (*this, 522.0f, 1311.0f, 26.0f, 26.0f),
-                designBounds (*this, 1165.0f, 1311.0f, 26.0f, 26.0f) };
+            const auto scale = juce::jmin (sx, sy);
+            fillSkinBackground (1535.0f, 874.0f, 190.0f, 56.0f);
+            fillSkinBackground (1535.0f, 928.0f, 190.0f, 87.0f);
+            fillSkinBackground (2148.0f, 930.0f, 195.0f, 80.0f);
+            const auto drawArrow = [&] (juce::Rectangle<float> bounds, juce::Colour colour)
+            {
+                const auto centre = bounds.getCentre();
+                juce::Path arrow;
+                arrow.addTriangle (centre.x - 5.0f * scale, centre.y - 2.5f * scale,
+                                   centre.x + 5.0f * scale, centre.y - 2.5f * scale,
+                                   centre.x, centre.y + 3.5f * scale);
+                g.setColour (colour);
+                g.fillPath (arrow);
+            };
+            const auto drawComboFrame = [&] (juce::Rectangle<float> bounds, bool dark)
+            {
+                g.setColour (juce::Colour (0x24000000));
+                g.fillRoundedRectangle (bounds.translated (0.0f, 1.5f * scale), 7.0f * scale);
+                g.setGradientFill (juce::ColourGradient (dark ? juce::Colour (0xff57595c) : juce::Colour (0xffe7e6e6),
+                                                         bounds.getX(), bounds.getY(),
+                                                         dark ? juce::Colour (0xff26282b) : juce::Colour (0xffb9b8b8),
+                                                         bounds.getX(), bounds.getBottom(), false));
+                g.fillRoundedRectangle (bounds, 7.0f * scale);
+                g.setColour (juce::Colour (0xff8e8e8f));
+                g.drawRoundedRectangle (bounds, 7.0f * scale, 0.8f * scale);
+            };
+
+            const auto sourceBounds = designRect (*this, 1543.0f, 882.0f, 174.0f, 40.0f);
+            drawComboFrame (sourceBounds, true);
+            g.setColour (juce::Colour (0xffeef0f3));
+            g.fillRoundedRectangle (sourceBounds.getX() + 13.0f * sx,
+                                    sourceBounds.getCentreY() - 4.0f * sy,
+                                    8.0f * sx, 8.0f * sy, 1.5f * scale);
+            g.setFont (juce::FontOptions (16.0f * sy, juce::Font::bold));
+            g.drawFittedText (modulationSource.getText(),
+                              sourceBounds.reduced (30.0f * sx, 2.0f * sy).getSmallestIntegerContainer(),
+                              juce::Justification::centredLeft, 1);
+            drawArrow (sourceBounds.withTrimmedLeft (sourceBounds.getWidth() - 30.0f * sx), juce::Colour (0xffeef0f3));
+
+            const auto shapeBounds = designRect (*this, 1544.0f, 935.0f, 172.0f, 72.0f);
+            drawComboFrame (shapeBounds, false);
+            g.setColour (juce::Colour (0xff8e8e8f));
+            g.drawVerticalLine (juce::roundToInt (shapeBounds.getRight() - 34.0f * sx),
+                                shapeBounds.getY() + 1.0f * sy, shapeBounds.getBottom() - 1.0f * sy);
+            const auto waveBounds = shapeBounds.withTrimmedRight (42.0f * sx).reduced (18.0f * sx, 14.0f * sy);
+            const auto source = modulationSource.getSelectedItemIndex();
+            const auto shape = source == 2 ? lfo2Shape.getSelectedItemIndex()
+                                           : source == 3 ? lfo3Shape.getSelectedItemIndex()
+                                                         : lfoShape.getSelectedItemIndex();
+            juce::Path icon;
+            for (int point = 0; point <= 48; ++point)
+            {
+                const auto phase = static_cast<float> (point) / 48.0f;
+                float value = 0.0f;
+                if (shape == 0) value = std::sin (phase * juce::MathConstants<float>::twoPi);
+                else if (shape == 1) value = 1.0f - 4.0f * std::abs (phase - 0.5f);
+                else if (shape == 2) value = phase * 2.0f - 1.0f;
+                else if (shape == 3) value = phase < 0.5f ? 1.0f : -1.0f;
+                else value = std::sin (phase * 31.0f) * 0.72f;
+                const auto x = waveBounds.getX() + phase * waveBounds.getWidth();
+                const auto y = waveBounds.getCentreY() - value * waveBounds.getHeight() * 0.45f;
+                if (point == 0) icon.startNewSubPath (x, y); else icon.lineTo (x, y);
+            }
+            g.setColour (juce::Colour (0xff515357));
+            g.strokePath (icon, juce::PathStrokeType (1.6f * scale));
+            drawArrow (shapeBounds.withTrimmedLeft (shapeBounds.getWidth() - 34.0f * sx), juce::Colour (0xff292b2e));
+
+            const auto destinationBounds = designRect (*this, 2161.0f, 939.0f, 170.0f, 60.0f);
+            drawComboFrame (destinationBounds, false);
+            g.setColour (juce::Colour (0xff292b2e));
+            g.setFont (juce::FontOptions (17.0f * sy, juce::Font::bold));
+            g.drawFittedText (modulationDestination.getText(),
+                              destinationBounds.reduced (12.0f * sx, 2.0f * sy).withTrimmedRight (24.0f * sx).getSmallestIntegerContainer(),
+                              juce::Justification::centredLeft, 1);
+            drawArrow (destinationBounds.withTrimmedLeft (destinationBounds.getWidth() - 30.0f * sx), juce::Colour (0xff292b2e));
+        }
+
+        // Effect enable state. The complete title strip is the hit target, while
+        // this LED replaces the tiny baked symbol with an unambiguous state.
+        {
+            const std::array<juce::Rectangle<float>, 3> iconRects {
+                designRect (*this, 208.0f, 1315.0f, 22.0f, 22.0f),
+                designRect (*this, 531.0f, 1314.0f, 22.0f, 22.0f),
+                designRect (*this, 1183.0f, 1314.0f, 22.0f, 22.0f) };
             const std::array<bool, 3> on {
                 chrome::params::load (processor.parameters, "chorus_enabled") > 0.5f,
                 chrome::params::load (processor.parameters, "delay_enabled") > 0.5f,
                 chrome::params::load (processor.parameters, "reverb_enabled") > 0.5f };
             for (int i = 0; i < 3; ++i)
-                if (! on[static_cast<size_t> (i)])
-                {
-                    g.setColour (juce::Colour (0xaa000000));
-                    g.fillEllipse (iconRects[static_cast<size_t> (i)].toFloat());
-                }
-        }
-
-        // Dynamic combo readouts in MODULATION (mask baked text, draw selection).
-        {
-            const auto combos = std::array<std::pair<juce::ComboBox*, juce::Rectangle<int>>, 3> {
-                std::make_pair (&modulationSource, designRect (*this, 1535.0f, 846.0f, 172.0f, 49.0f).getSmallestIntegerContainer()),
-                std::make_pair (&lfoShape, designRect (*this, 1535.0f, 901.0f, 172.0f, 68.0f).getSmallestIntegerContainer()),
-                std::make_pair (&modulationDestination, designRect (*this, 2164.0f, 896.0f, 165.0f, 54.0f).getSmallestIntegerContainer()) };
-            for (auto& [combo, rect] : combos)
             {
-                g.setColour (juce::Colour (0xffb4b1b1));
-                g.fillRoundedRectangle (rect.toFloat().reduced (2.0f), 4.0f * juce::jmin (sx, sy));
-                g.setColour (juce::Colour (0xff292b2e));
-                g.setFont (juce::FontOptions (15.0f * sy, juce::Font::bold));
-                g.drawFittedText (combo->getText(), rect.reduced (6, 2), juce::Justification::centredLeft, 1);
+                const auto icon = iconRects[static_cast<size_t> (i)];
+                g.setColour (sampleSkinAt (i == 0 ? 200.0f : i == 1 ? 523.0f : 1175.0f, 1325.0f));
+                g.fillEllipse (icon.expanded (3.0f * sx, 3.0f * sy));
+                g.setColour (on[static_cast<size_t> (i)] ? juce::Colour (0xff5f91e8) : juce::Colour (0xff66696c));
+                g.drawEllipse (icon, 2.0f * juce::jmin (sx, sy));
+                if (on[static_cast<size_t> (i)])
+                    g.fillEllipse (icon.reduced (7.0f * sx, 7.0f * sy));
             }
         }
-        // Dynamic preset name (mask baked "Init Patch", draw current).
+
+        // Dynamic preset control: redraw the complete capsule so the changing
+        // name never leaves a rectangular patch over the baked default.
         {
-            const auto r = designRect (*this, 1024.0f, 85.0f, 360.0f, 53.0f);
-            g.setColour (juce::Colour (0xffefefec));
-            g.fillRoundedRectangle (r.toFloat(), 4.0f * juce::jmin (sx, sy));
+            const auto bounds = designRect (*this, 955.0f, 85.0f, 542.0f, 53.0f);
+            const auto radius = 24.0f * juce::jmin (sx, sy);
+            g.setColour (juce::Colour (0x24000000));
+            g.fillRoundedRectangle (bounds.translated (0.0f, 1.3f * sy), radius);
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xfff4f3f2), bounds.getX(), bounds.getY(),
+                                                     juce::Colour (0xffc0bfbf), bounds.getX(), bounds.getBottom(), false));
+            g.fillRoundedRectangle (bounds, radius);
+            g.setColour (juce::Colour (0xff85878a));
+            g.drawRoundedRectangle (bounds, radius, 0.9f * juce::jmin (sx, sy));
+
+            const auto previousRight = designRect (*this, 1018.0f, 85.0f, 1.0f, 53.0f).getX();
+            const auto saveLeft = designRect (*this, 1432.0f, 85.0f, 1.0f, 53.0f).getX();
+            g.setColour (juce::Colour (0xffaaa9a9));
+            g.drawVerticalLine (juce::roundToInt (previousRight), bounds.getY() + 3.0f * sy, bounds.getBottom() - 3.0f * sy);
+            g.drawVerticalLine (juce::roundToInt (saveLeft), bounds.getY() + 3.0f * sy, bounds.getBottom() - 3.0f * sy);
+
+            juce::Path previousArrow;
+            const auto previousCentre = designRect (*this, 986.0f, 111.5f, 1.0f, 1.0f).getCentre();
+            previousArrow.addTriangle (previousCentre.x + 4.0f * sx, previousCentre.y - 7.0f * sy,
+                                       previousCentre.x + 4.0f * sx, previousCentre.y + 7.0f * sy,
+                                       previousCentre.x - 5.0f * sx, previousCentre.y);
             g.setColour (juce::Colour (0xff292b2e));
+            g.fillPath (previousArrow);
+
+            const auto saveIcon = designRect (*this, 1457.0f, 99.0f, 16.0f, 24.0f);
+            g.drawRoundedRectangle (saveIcon, 1.5f * juce::jmin (sx, sy), 1.5f * juce::jmin (sx, sy));
+            g.fillRect (saveIcon.getX() + 4.0f * sx, saveIcon.getY() + 2.0f * sy,
+                        8.0f * sx, 6.0f * sy);
+            g.drawRect (saveIcon.getX() + 4.0f * sx, saveIcon.getY() + 14.0f * sy,
+                        8.0f * sx, 7.0f * sy, 1.0f * juce::jmin (sx, sy));
+
+            const auto nameBounds = designRect (*this, 1019.0f, 87.0f, 412.0f, 49.0f);
             g.setFont (juce::FontOptions (16.0f * sy, juce::Font::bold));
-            g.drawFittedText (processor.presets.currentName(), r.getSmallestIntegerContainer(), juce::Justification::centredLeft, 1);
+            g.drawFittedText (processor.presets.currentName(), nameBounds.getSmallestIntegerContainer(), juce::Justification::centred, 1);
         }
 
-        if (chrome::params::load (processor.parameters, "power") < 0.5f)
-        {
-            g.setColour (juce::Colour (0x52080a0d));
-            g.fillRoundedRectangle (designRect (*this, 45, 31, 2326, 1638),
-                                    74.0f * juce::jmin (sx, sy));
-        }
-
-        // Live output meter, aligned to the vector frame.
-        const auto meterArea = designRect (*this, 2234, 1328, 70, 154);
-        // Mask only the segment cells (keep the baked frame).
-        g.setColour (juce::Colour (0xff3d4045));
+        // Live output meter: erase the complete baked meter before drawing one
+        // pair of columns at the measured Figma coordinates.
+        const auto meterMask = designRect (*this, 2228.0f, 1308.0f, 70.0f, 184.0f);
+        juce::ColourGradient meterBackground (juce::Colour (0xffa7a5a4), meterMask.getX(), meterMask.getY(),
+                                               juce::Colour (0xffa2a1a0), meterMask.getX(), meterMask.getBottom(), false);
+        meterBackground.addColour (0.50, juce::Colour (0xff979594));
+        g.setGradientFill (meterBackground);
+        g.fillRect (meterMask);
+        const auto peakDb = juce::Decibels::gainToDecibels (displayedPeak, -60.0f);
+        const auto level = juce::jlimit (0.0f, 1.0f, (peakDb + 60.0f) / 60.0f);
+        constexpr std::array<float, 2> meterX { 2238.0f, 2267.0f };
+        constexpr float segmentWidth = 18.0f;
+        constexpr float segmentHeight = 7.0f;
+        constexpr float segmentGap = 4.5f;
+        constexpr float meterBottom = 1486.0f;
         for (int channel = 0; channel < 2; ++channel)
             for (int segment = 0; segment < 15; ++segment)
             {
-                const auto segmentHeight = meterArea.getHeight() / 17.0f;
-                const auto y = meterArea.getBottom() - (static_cast<float> (segment) + 1.0f) * (segmentHeight + sy);
-                g.fillRect (meterArea.getX() + static_cast<float> (channel) * 22.0f * sx,
-                            y, 15.0f * sx, segmentHeight);
-            }
-        const auto level = juce::jlimit (0.0f, 1.0f, displayedPeak);
-        for (int channel = 0; channel < 2; ++channel)
-            for (int segment = 0; segment < 15; ++segment)
-            {
-                const auto segmentHeight = meterArea.getHeight() / 17.0f;
-                const auto y = meterArea.getBottom() - (static_cast<float> (segment) + 1.0f) * (segmentHeight + sy);
+                const auto x = meterX[static_cast<size_t> (channel)];
+                const auto y = meterBottom - segmentHeight - static_cast<float> (segment) * (segmentHeight + segmentGap);
                 const auto lit = static_cast<float> (segment + 1) / 15.0f <= level;
                 g.setColour (lit ? juce::Colour (0xff9fc2ff) : juce::Colour (0xff5f6266));
-                g.fillRect (meterArea.getX() + static_cast<float> (channel) * 22.0f * sx,
-                            y, 15.0f * sx, segmentHeight);
+                g.fillRect (designRect (*this, x, y, segmentWidth, segmentHeight));
             }
-        const std::array<std::vector<std::unique_ptr<BoundKnob>>*, 6> collections {
-            &filterKnobs, &envelopeKnobs, &pitchKnobs, &effectKnobs, &masterKnobs, &modulationKnobs };
-        const auto vsx = juce::jmin (sx, sy);
-        g.setFont (juce::FontOptions (10.5f * vsx, juce::Font::bold));
-        for (auto* collection : collections)
-            for (auto& knob : *collection)
-            {
-                const auto b = knob->getBounds();
-                const int tw = juce::jmin (b.getWidth() + 12, 118);
-                const int th = 16;
-                auto textRect = juce::Rectangle<int> (b.getCentreX() - tw / 2, b.getBottom() + 2, tw, th);
-                if (textRect.getBottom() > getHeight()) textRect = textRect.translated (0, -th - b.getHeight() - 4);
-                const auto mask = sampleSkin (juce::Point<int> (textRect.getRight() + 4, textRect.getBottom() + 4));
-                g.setColour (mask);
-                g.fillRoundedRectangle (textRect.toFloat().expanded (2.0f, 1.0f), 4.0f * vsx);
-                g.setColour (juce::Colour (0xff292b2e));
-                g.drawFittedText (knob->getValueText(), textRect, juce::Justification::centred, 1);
-            }
+        // Replace each baked value in place. The labels remain part of the skin;
+        // drawing relative to the knob bounds put a second value over the labels.
+        const auto drawTextValue = [&] (const juce::String& text, float x, float y, float width, float height,
+                                        float fontHeight = 18.0f)
+        {
+            const auto rect = designRect (*this, x, y, width, height);
+            fillSkinBackground (x, y, width, height);
+            g.setColour (juce::Colour (0xff292b2e));
+            g.setFont (juce::FontOptions (fontHeight * sy));
+            g.drawFittedText (text, rect.getSmallestIntegerContainer(), juce::Justification::centred, 1);
+        };
+        const auto drawValue = [&] (const BoundKnob& knob, float x, float y, float width, float height,
+                                     float fontHeight = 18.0f)
+        {
+            drawTextValue (knob.getValueText(), x, y, width, height, fontHeight);
+        };
+
+        drawValue (*filterKnobs[0], 2075.0f, 472.0f, 170.0f, 25.0f);
+        drawValue (*filterKnobs[1], 1960.0f, 640.0f, 140.0f, 23.0f);
+        drawValue (*filterKnobs[2], 2200.0f, 640.0f, 140.0f, 23.0f);
+
+        const auto drawCompactFilterControl = [&] (const BoundKnob& knob, const juce::String& label, float x)
+        {
+            const auto labelRect = designRect (*this, x, 385.0f, 100.0f, 18.0f);
+            fillSkinBackground (x, 383.0f, 100.0f, 47.0f);
+            g.setColour (juce::Colour (0xff3b3d40));
+            g.setFont (juce::FontOptions (18.0f * sy, juce::Font::bold));
+            g.drawText (label, labelRect, juce::Justification::centred);
+            g.setFont (juce::FontOptions (17.0f * sy));
+            g.drawText (knob.getValueText(), designRect (*this, x, 405.0f, 100.0f, 20.0f), juce::Justification::centred);
+        };
+        drawCompactFilterControl (*filterKnobs[3], "ENV", 1965.0f);
+        drawCompactFilterControl (*filterKnobs[4], "KEYTRK", 2250.0f);
+
+        constexpr std::array<float, 4> envelopeCentres { 197.7f, 390.7f, 585.7f, 778.7f };
+        for (size_t i = 0; i < envelopeKnobs.size(); ++i)
+            drawValue (*envelopeKnobs[i], envelopeCentres[i] - 65.0f, 996.0f, 130.0f, 22.0f);
+
+        drawValue (*pitchKnobs[0], 1150.0f, 1018.0f, 135.0f, 24.0f);
+        drawValue (*pitchKnobs[1], 950.0f, 1104.0f, 125.0f, 21.0f, 17.0f);
+        drawValue (*pitchKnobs[2], 1158.0f, 1192.0f, 125.0f, 21.0f, 17.0f);
+        g.setColour (juce::Colour (0xff292b2e));
+        g.setFont (juce::FontOptions (17.0f * sy, juce::Font::bold));
+        g.drawText ("MORPH Y", designRect (*this, 1340.0f, 1078.0f, 145.0f, 20.0f), juce::Justification::centred);
+        g.setFont (juce::FontOptions (17.0f * sy));
+        g.drawText (pitchKnobs[3]->getValueText(), designRect (*this, 1340.0f, 1102.0f, 145.0f, 21.0f), juce::Justification::centred);
+
+        constexpr std::array<float, 7> effectCentres { 276.7f, 617.7f, 806.7f, 994.7f, 1254.7f, 1443.7f, 1631.7f };
+        for (size_t i = 0; i < effectKnobs.size(); ++i)
+            if (i == 1 && chrome::params::load (processor.parameters, "delay_sync") > 0.5f)
+                drawTextValue (delayDivision.getText(), effectCentres[i] - 60.0f, 1476.0f, 120.0f, 23.0f);
+            else
+                drawValue (*effectKnobs[i], effectCentres[i] - 60.0f, 1476.0f, 120.0f, 23.0f);
+        if (chrome::params::load (processor.parameters, "delay_sync") > 0.5f)
+        {
+            const auto arrowCentre = designRect (*this, effectCentres[1] + 48.0f, 1487.5f, 1.0f, 1.0f).getCentre();
+            juce::Path arrow;
+            arrow.addTriangle (arrowCentre.x - 4.0f * sx, arrowCentre.y - 2.0f * sy,
+                               arrowCentre.x + 4.0f * sx, arrowCentre.y - 2.0f * sy,
+                               arrowCentre.x, arrowCentre.y + 3.0f * sy);
+            g.setColour (juce::Colour (0xff45484c));
+            g.fillPath (arrow);
+        }
+
+        constexpr std::array<float, 2> masterCentres { 1918.4f, 2130.2f };
+        for (size_t i = 0; i < masterKnobs.size(); ++i)
+            drawValue (*masterKnobs[i], masterCentres[i] - 65.0f, 1480.0f, 130.0f, 23.0f);
+
+        const auto source = modulationSource.getSelectedItemIndex();
+        const auto modulationOffset = source == 2 ? 2u : source == 3 ? 4u : 0u;
+        drawValue (*modulationKnobs[modulationOffset], 1785.0f, 996.0f, 125.0f, 21.0f, 17.0f);
+        drawValue (*modulationKnobs[modulationOffset + 1], 1960.0f, 996.0f, 125.0f, 21.0f, 17.0f);
         return;
     }
 
@@ -1007,18 +1326,16 @@ void Chrome2000AudioProcessorEditor::resized()
     pitchKnobs[3]->setBounds (designBounds (*this, 1360.0f, 966.0f, 103.3594f, 103.3594f));
     legato.setBounds (designBounds (*this, 966, 1126, 151, 43));
 
-    modulationSource.setBounds (designBounds (*this, 1535, 846, 172, 49));
-    lfoShape.setBounds (designBounds (*this, 1535, 901, 172, 68));
-    modulationDestination.setBounds (designBounds (*this, 2164, 896, 165, 54));
-    modulationKnobs[0]->setBounds (designBounds (*this, 1795.0f, 860.0f, 103.3594f, 103.3594f));
-    modulationKnobs[1]->setBounds (designBounds (*this, 1971.0f, 860.0f, 103.3594f, 103.3594f));
-    modulationKnobs[2]->setBounds (designBounds (*this, 1665.0f, 982.0f, 34.0f, 34.0f));
-    modulationKnobs[3]->setBounds (designBounds (*this, 1702.0f, 982.0f, 34.0f, 34.0f));
-    modulationKnobs[4]->setBounds (designBounds (*this, 1835.0f, 982.0f, 34.0f, 34.0f));
-    modulationKnobs[5]->setBounds (designBounds (*this, 1872.0f, 982.0f, 34.0f, 34.0f));
+    modulationSource.setBounds (designBounds (*this, 1543.0f, 882.0f, 174.0f, 40.0f));
+    modulationDestination.setBounds (designBounds (*this, 2161.0f, 939.0f, 170.0f, 60.0f));
+    for (auto* shape : { &lfoShape, &lfo2Shape, &lfo3Shape })
+        shape->setBounds (designBounds (*this, 1544.0f, 935.0f, 172.0f, 72.0f));
 
-    lfo2Shape.setBounds (designBounds (*this, 1535.0f, 978.0f, 120.0f, 32.0f));
-    lfo3Shape.setBounds (designBounds (*this, 1740.0f, 978.0f, 120.0f, 32.0f));
+    for (size_t i = 0; i < modulationKnobs.size(); i += 2)
+    {
+        modulationKnobs[i]->setBounds (designBounds (*this, 1795.0f, 860.0f, 103.3594f, 103.3594f));
+        modulationKnobs[i + 1]->setBounds (designBounds (*this, 1971.0f, 860.0f, 103.3594f, 103.3594f));
+    }
 
     filterKnobs[3]->setBounds (designBounds (*this, 1975.0f, 300.0f, 80.0f, 80.0f));
     filterKnobs[4]->setBounds (designBounds (*this, 2260.0f, 300.0f, 80.0f, 80.0f));
@@ -1031,19 +1348,24 @@ void Chrome2000AudioProcessorEditor::resized()
     masterKnobs[0]->setBounds (designBounds (*this, 1855.2539f, 1312.9238f, 126.3281f, 126.3281f));
     masterKnobs[1]->setBounds (designBounds (*this, 2067.0156f, 1312.9238f, 126.3281f, 126.3281f));
 
-    chorusToggle.setBounds (designBounds (*this, 139.0f, 1311.0f, 26.0f, 26.0f));
-    delayToggle.setBounds (designBounds (*this, 522.0f, 1311.0f, 26.0f, 26.0f));
-    reverbToggle.setBounds (designBounds (*this, 1165.0f, 1311.0f, 26.0f, 26.0f));
+    chorusToggle.setBounds (designBounds (*this, 121.0f, 1296.0f, 311.0f, 45.0f));
+    delayToggle.setBounds (designBounds (*this, 504.0f, 1296.0f, 591.0f, 45.0f));
+    reverbToggle.setBounds (designBounds (*this, 1147.0f, 1296.0f, 590.0f, 45.0f));
+    delaySync.setBounds (designBounds (*this, 972.0f, 1306.0f, 94.0f, 28.0f));
+    delayDivision.setBounds (designBounds (*this, 557.7f, 1468.0f, 120.0f, 40.0f));
 
-    waveTab.setBounds (designBounds (*this, 130, 1577, 160, 49));
-    spectrumTab.setBounds (designBounds (*this, 309, 1577, 173, 49));
-    modTab.setBounds (designBounds (*this, 499, 1577, 160, 49));
+    waveTab.setBounds (designBounds (*this, 112.0f, 1571.0f, 164.0f, 54.0f));
+    spectrumTab.setBounds (designBounds (*this, 299.0f, 1577.0f, 164.0f, 49.0f));
+    modTab.setBounds (designBounds (*this, 488.0f, 1577.0f, 162.0f, 49.0f));
     morphX.setBounds (designBounds (*this, 730, 1585, 1430, 46));
     aboutOverlay.setBounds (getLocalBounds());
 }
 
 void Chrome2000AudioProcessorEditor::timerCallback()
 {
+    updateModulationControls();
+    updatePowerState();
+    updateDelayControls();
     displayedPeak = juce::jmax (processor.engine.outputPeak(), displayedPeak * 0.9f);
     if (valueBubble.isVisible() && activeDragKnob != nullptr)
     {
@@ -1057,6 +1379,78 @@ void Chrome2000AudioProcessorEditor::timerCallback()
         valueBubble.setBounds (x, y, bw, bh);
     }
     repaint();
+}
+
+void Chrome2000AudioProcessorEditor::paintOverChildren (juce::Graphics& g)
+{
+    if (figmaSkin.isValid() && chrome::params::load (processor.parameters, "power") < 0.5f)
+    {
+        const auto sx = static_cast<float> (getWidth()) / designWidth;
+        const auto sy = static_cast<float> (getHeight()) / designHeight;
+        g.setColour (juce::Colour (0x65080a0d));
+        g.fillRoundedRectangle (designRect (*this, 45.0f, 31.0f, 2326.0f, 1638.0f),
+                                74.0f * juce::jmin (sx, sy));
+    }
+}
+
+void Chrome2000AudioProcessorEditor::updateModulationControls()
+{
+    const auto source = modulationSource.getSelectedItemIndex();
+    const auto activeLfo = source == 2 ? 1 : source == 3 ? 2 : 0;
+    const std::array<juce::ComboBox*, 3> shapes { &lfoShape, &lfo2Shape, &lfo3Shape };
+
+    for (int lfo = 0; lfo < 3; ++lfo)
+    {
+        const auto visible = lfo == activeLfo;
+        shapes[static_cast<size_t> (lfo)]->setVisible (visible);
+        modulationKnobs[static_cast<size_t> (lfo * 2)]->setVisible (visible);
+        modulationKnobs[static_cast<size_t> (lfo * 2 + 1)]->setVisible (visible);
+    }
+}
+
+void Chrome2000AudioProcessorEditor::updatePowerState()
+{
+    const auto enabled = chrome::params::load (processor.parameters, "power") >= 0.5f;
+    if (enabled == controlsEnabled)
+    {
+        updateDelayControls();
+        return;
+    }
+
+    controlsEnabled = enabled;
+    for (auto& slot : slots)
+        slot->setEnabled (enabled);
+    for (auto* collection : { &filterKnobs, &envelopeKnobs, &pitchKnobs,
+                              &effectKnobs, &masterKnobs, &modulationKnobs })
+        for (auto& knob : *collection)
+            knob->setEnabled (enabled);
+
+    for (auto* component : std::initializer_list<juce::Component*> {
+             &presetBox, &previous, &save, &filterType,
+             &modulationSource, &modulationDestination, &lfoShape, &lfo2Shape, &lfo3Shape,
+             &morphX, &waveTab, &spectrumTab, &modTab, &legato,
+             &chorusToggle, &delayToggle, &reverbToggle, &delaySync, &delayDivision })
+        component->setEnabled (enabled);
+
+    if (! enabled)
+    {
+        activeDragKnob = nullptr;
+        valueBubble.setVisible (false);
+    }
+    updateDelayControls();
+}
+
+void Chrome2000AudioProcessorEditor::updateDelayControls()
+{
+    const auto sync = chrome::params::load (processor.parameters, "delay_sync") > 0.5f;
+    if (effectKnobs.size() > 1)
+    {
+        effectKnobs[1]->bindToParameter (sync ? "delay_division" : "delay_time");
+        effectKnobs[1]->setEnabled (controlsEnabled);
+    }
+    delaySync.setEnabled (controlsEnabled);
+    delayDivision.setEnabled (controlsEnabled && sync);
+    delayDivision.setVisible (true);
 }
 
 void Chrome2000AudioProcessorEditor::rebuildPresetList()

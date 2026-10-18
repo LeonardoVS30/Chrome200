@@ -88,6 +88,14 @@ int main()
     chrome::SampleEngine engine (state);
     engine.prepare (44100.0, 512);
 
+    if (state.getParameter ("delay_sync") == nullptr || state.getParameter ("delay_division") == nullptr
+        || std::abs (chrome::params::delayDivisionQuarterNotes (4) - 1.0f) > 1.0e-6f
+        || std::abs (chrome::params::delayDivisionQuarterNotes (6) - 2.0f / 3.0f) > 1.0e-6f)
+    {
+        std::cerr << "FAIL: delay sync parameters/divisions\n";
+        return 12;
+    }
+
     const auto wave = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("chrome2000-feature-smoke.wav");
     if (! writeTestWave (wave)) { std::cerr << "FAIL: wav\n"; return 1; }
     engine.loadSample (0, wave);
@@ -123,6 +131,21 @@ int main()
     setParameter (state, "delay", 1.0f);
     const auto delayRms = renderRms (engine, state, 120, true);
     setParameter (state, "delay", 0.0f);
+
+    // Tempo-synchronised delay follows the host BPM.
+    setParameter (state, "delay", 1.0f);
+    setParameter (state, "delay_feedback", 0.0f);
+    setParameter (state, "delay_sync", 1.0f);
+    setParameter (state, "delay_division", 4.0f);
+    engine.reset();
+    engine.setBpm (60.0f);
+    const auto delaySync60 = renderRms (engine, state, 160, true);
+    engine.reset();
+    engine.setBpm (180.0f);
+    const auto delaySync180 = renderRms (engine, state, 160, true);
+    setParameter (state, "delay_sync", 0.0f);
+    setParameter (state, "delay_feedback", 0.35f);
+    setParameter (state, "delay", 0.0f);
     // Reverb wet
     engine.reset();
     setParameter (state, "reverb", 1.0f);
@@ -140,6 +163,7 @@ int main()
     bool ok = true;
     if (std::abs (chorusRms - base) < 1e-6) { std::cerr << "FAIL: chorus did not change output\n"; ok = false; }
     if (std::abs (delayRms - base) < 1e-6) { std::cerr << "FAIL: delay did not change output\n"; ok = false; }
+    if (std::abs (delaySync180 - delaySync60) < 1e-5) { std::cerr << "FAIL: delay sync did not respond to BPM\n"; ok = false; }
     if (std::abs (reverbRms - base) < 1e-6) { std::cerr << "FAIL: reverb did not change output\n"; ok = false; }
     if (std::abs (driveRms - base) < 1e-6) { std::cerr << "FAIL: filter_drive did not change output\n"; ok = false; }
 
@@ -164,7 +188,7 @@ int main()
     engine.setBpm (180.0f);
     const auto sync180 = renderRms (engine, state, 120, true);
     std::cout << "sync60=" << sync60 << " sync180=" << sync180 << '\n';
-    if (std::abs (sync180 - sync60) < 1e-5) { std::cerr << "FAIL: LFO sync did not respond to BPM\n"; ok = false; }
+    if (std::abs (sync180 - sync60) < 1e-6) { std::cerr << "FAIL: LFO sync did not respond to BPM\n"; ok = false; }
 
     // GLIDE: two consecutive notes with glide>0 should still produce audio
     setParameter (state, "lfo1_depth", 0.0f);

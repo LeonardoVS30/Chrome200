@@ -41,6 +41,76 @@ int main()
         return 1;
     }
 
+    for (const auto* id : { "chorusToggle", "delayToggle", "reverbToggle" })
+    {
+        auto* effectToggle = dynamic_cast<juce::Button*> (editor->findChildWithID (id));
+        if (effectToggle == nullptr || effectToggle->getWidth() < 100)
+        {
+            std::cerr << "FAIL: effect title is not a usable bypass target: " << id << '\n';
+            return 8;
+        }
+    }
+
+    auto* delaySync = dynamic_cast<juce::Button*> (editor->findChildWithID ("delaySync"));
+    auto* delayDivision = dynamic_cast<juce::ComboBox*> (editor->findChildWithID ("delayDivision"));
+    auto* delayTime = editor->findChildWithID ("delay_time");
+    auto* delaySyncParameter = processor.parameters.getParameter ("delay_sync");
+    if (delaySync == nullptr || delayDivision == nullptr || delayTime == nullptr || delaySyncParameter == nullptr)
+    {
+        std::cerr << "FAIL: delay mode controls are missing\n";
+        return 12;
+    }
+    delaySyncParameter->setValueNotifyingHost (1.0f);
+    delaySync->onStateChange();
+    if (! delayTime->isEnabled() || ! delayDivision->isEnabled())
+    {
+        std::cerr << "FAIL: delay sync did not switch time controls\n";
+        return 13;
+    }
+    auto* delayTimeSlider = dynamic_cast<juce::Slider*> (delayTime->getChildComponent (2));
+    if (delayTimeSlider == nullptr)
+    {
+        std::cerr << "FAIL: delay TIME knob has no slider\n";
+        return 14;
+    }
+    delayTimeSlider->setValue (7.0, juce::sendNotificationSync);
+    if (std::abs (chrome::params::load (processor.parameters, "delay_division") - 7.0f) > 0.01f)
+    {
+        std::cerr << "FAIL: delay TIME knob does not control divisions in sync mode\n";
+        return 15;
+    }
+    delaySyncParameter->setValueNotifyingHost (0.0f);
+    delaySync->onStateChange();
+    delayTimeSlider->setValue (0.625, juce::sendNotificationSync);
+    if (std::abs (chrome::params::load (processor.parameters, "delay_time") - 0.625f) > 0.001f)
+    {
+        std::cerr << "FAIL: delay TIME knob did not return to milliseconds mode\n";
+        return 16;
+    }
+
+    auto* powerButton = dynamic_cast<juce::Button*> (editor->findChildWithID ("powerButton"));
+    auto* cutoffKnob = editor->findChildWithID ("filter_cutoff");
+    auto* powerParameter = processor.parameters.getParameter ("power");
+    if (powerButton == nullptr || cutoffKnob == nullptr || powerParameter == nullptr)
+    {
+        std::cerr << "FAIL: power-lock controls are missing\n";
+        return 9;
+    }
+    powerParameter->setValueNotifyingHost (0.0f);
+    powerButton->onStateChange();
+    if (cutoffKnob->isEnabled() || ! powerButton->isEnabled())
+    {
+        std::cerr << "FAIL: power off did not lock editing controls\n";
+        return 10;
+    }
+    powerParameter->setValueNotifyingHost (1.0f);
+    powerButton->onStateChange();
+    if (! cutoffKnob->isEnabled())
+    {
+        std::cerr << "FAIL: power on did not restore editing controls\n";
+        return 11;
+    }
+
     auto* logoTarget = editor->findChildWithID ("chromeLogoHitArea");
     if (auto* logoButton = dynamic_cast<juce::Button*> (logoTarget))
         logoButton->onClick();
@@ -48,6 +118,28 @@ int main()
     {
         std::cerr << "FAIL: CHROME logo is not an actionable button\n";
         return 3;
+    }
+
+    auto* modulationSource = dynamic_cast<juce::ComboBox*> (editor->findChildWithID ("modulationSource"));
+    auto* lfo1Shape = editor->findChildWithID ("lfo1Shape");
+    auto* lfo2Shape = editor->findChildWithID ("lfo2Shape");
+    auto* lfo3Shape = editor->findChildWithID ("lfo3Shape");
+    if (modulationSource == nullptr || lfo1Shape == nullptr || lfo2Shape == nullptr || lfo3Shape == nullptr)
+    {
+        std::cerr << "FAIL: contextual LFO controls are missing\n";
+        return 5;
+    }
+    modulationSource->setSelectedItemIndex (2, juce::sendNotificationSync);
+    if (lfo1Shape->isVisible() || ! lfo2Shape->isVisible() || lfo3Shape->isVisible())
+    {
+        std::cerr << "FAIL: selecting LFO 2 did not switch its controls\n";
+        return 6;
+    }
+    modulationSource->setSelectedItemIndex (3, juce::sendNotificationSync);
+    if (lfo1Shape->isVisible() || lfo2Shape->isVisible() || ! lfo3Shape->isVisible())
+    {
+        std::cerr << "FAIL: selecting LFO 3 did not switch its controls\n";
+        return 7;
     }
 
     const auto aboutDestination = juce::File ("C:\\tmp\\chrome2000-about-snapshot.png");

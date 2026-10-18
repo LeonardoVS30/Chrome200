@@ -53,7 +53,9 @@ bool writeTestWave (const juce::File& file)
     juce::AudioBuffer<float> signal (2, length);
     for (int sample = 0; sample < length; ++sample)
     {
-        const auto phase = juce::MathConstants<double>::twoPi * 220.0 * static_cast<double> (sample) / 44100.0;
+        // Deliberately non-periodic over one second so hard loop wrapping would
+        // produce an obvious discontinuity and broadband click.
+        const auto phase = juce::MathConstants<double>::twoPi * 220.37 * static_cast<double> (sample) / 44100.0;
         const auto value = static_cast<float> (std::sin (phase) * 0.35);
         signal.setSample (0, sample, value);
         signal.setSample (1, sample, value);
@@ -120,10 +122,12 @@ int main()
         double tailRightEnergy = 0.0;
         double tailCross = 0.0;
         int tailSamples = 0;
+        float maximumTailDelta = 0.0f;
     };
     const auto render = [&] (int blocks, bool triggerNote = true)
     {
         RenderStats stats;
+        std::array<float, 2> previous {};
         juce::MidiBuffer midi;
         if (triggerNote)
             midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
@@ -132,9 +136,7 @@ int main()
             output.clear();
             engine.process (output, midi);
             midi.clear();
-            stats.peak = juce::jmax (stats.peak,
-                                    output.getMagnitude (0, output.getNumSamples()),
-                                    output.getMagnitude (1, output.getNumSamples()));
+            stats.peak = juce::jmax (stats.peak, output.getMagnitude (0, output.getNumSamples()));
             for (int channel = 0; channel < output.getNumChannels(); ++channel)
                 for (int sample = 0; sample < output.getNumSamples(); ++sample)
                 {
@@ -146,6 +148,8 @@ int main()
                     }
                     if (block >= blocks - 80)
                     {
+                        stats.maximumTailDelta = juce::jmax (stats.maximumTailDelta,
+                                                             std::abs (value - previous[static_cast<size_t> (channel)]));
                         stats.tailSum += value;
                         stats.tailEnergy += static_cast<double> (value) * static_cast<double> (value);
                         if (channel == 0)
@@ -154,6 +158,7 @@ int main()
                             stats.tailRightEnergy += static_cast<double> (value) * static_cast<double> (value);
                         ++stats.tailSamples;
                     }
+                    previous[static_cast<size_t> (channel)] = value;
                 }
             if (block >= blocks - 80 && output.getNumChannels() > 1)
                 for (int sample = 0; sample < output.getNumSamples(); ++sample)
@@ -207,6 +212,9 @@ int main()
 
     setParameter (state, "s1_loop", 1.0f);
     constexpr std::array<const char*, 3> modeNames { "Ethernal", "Chrome", "Digital" };
+    std::array<double, 3> modeTailRms {};
+    std::array<float, 3> modeTailDelta {};
+    std::array<float, 3> modePeak {};
     for (int mode = 0; mode < 3; ++mode)
     {
         engine.reset();
@@ -214,10 +222,14 @@ int main()
         const auto modeStats = render (300);
         const auto modeMean = modeStats.tailSum / static_cast<double> (juce::jmax (1, modeStats.tailSamples));
         const auto modeRms = std::sqrt (modeStats.tailEnergy / static_cast<double> (juce::jmax (1, modeStats.tailSamples)));
+        modeTailRms[static_cast<size_t> (mode)] = modeRms;
+        modeTailDelta[static_cast<size_t> (mode)] = modeStats.maximumTailDelta;
+        modePeak[static_cast<size_t> (mode)] = modeStats.peak;
         const auto modeAcRms = std::sqrt (juce::jmax (0.0, modeRms * modeRms - modeMean * modeMean));
         std::cout << modeNames[static_cast<size_t> (mode)]
                   << "Peak=" << modeStats.peak
                   << " TailACRMS=" << modeAcRms
+                  << " TailDelta=" << modeStats.maximumTailDelta
                   << " TailDC=" << modeMean << '\n';
         if (modeStats.peak < 1.0e-4f || modeAcRms < 1.0e-4)
         {
@@ -225,6 +237,23 @@ int main()
                       << " collapsed into silence or DC\n";
             return 6 + mode;
         }
+    }
+    if (std::abs (modeTailRms[0] - modeTailRms[2]) < 1.0e-4
+        || std::abs (modeTailRms[1] - modeTailRms[2]) < 1.0e-4)
+    {
+        std::cerr << "FAIL: clean character modes became indistinguishable from Digital\n";
+        return 17;
+    }
+    if (modeTailDelta[0] > 0.08f || modeTailDelta[1] > 0.08f)
+    {
+        std::cerr << "FAIL: sustained character mode exposed a loop discontinuity\n";
+        return 18;
+    }
+    if (modePeak[0] > modePeak[2] * 1.15f || modePeak[1] > modePeak[2] * 1.15f
+        || modeTailRms[0] > modeTailRms[2] * 1.15 || modeTailRms[1] > modeTailRms[2] * 1.15)
+    {
+        std::cerr << "FAIL: character mode introduced an excessive level increase\n";
+        return 19;
     }
 
     engine.reset();
@@ -266,6 +295,68 @@ int main()
             std::cerr << "FAIL: character mode " << modeNames[static_cast<size_t> (mode)]
                       << " left a sustained one-shot tail\n";
             return 11 + mode;
+        }
+    }
+
+    // A released looped voice must not leave character processors producing
+    // noise indefinitely after their input has become silent.
+    setParameter (state, "s1_loop", 1.0f);
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        engine.reset();
+        setParameter (state, "s1_mode", static_cast<float> (mode));
+        if (mode == 1)
+        {
+            for (const auto* id : { "liquid", "reflect", "shine", "density", "fusion" })
+                setParameter (state, id, 1.0f);
+        }
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+        for (int block = 0; block < 400; ++block)
+        {
+            output.clear();
+            engine.process (output, midi);
+            midi.clear();
+        }
+
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 0);
+        double releaseEnergy = 0.0;
+        int releaseSamples = 0;
+        float releaseTailPeak = 0.0f;
+        const auto measurementStart = mode < 2 ? 40 : 120;
+        for (int block = 0; block < 160; ++block)
+        {
+            output.clear();
+            engine.process (output, midi);
+            midi.clear();
+            if (block >= measurementStart)
+            {
+                releaseTailPeak = juce::jmax (releaseTailPeak, output.getMagnitude (0, output.getNumSamples()));
+                for (int channel = 0; channel < output.getNumChannels(); ++channel)
+                    for (int sample = 0; sample < output.getNumSamples(); ++sample)
+                    {
+                        const auto value = output.getSample (channel, sample);
+                        releaseEnergy += static_cast<double> (value) * value;
+                        ++releaseSamples;
+                    }
+            }
+        }
+        const auto releaseTailRms = std::sqrt (releaseEnergy / static_cast<double> (juce::jmax (1, releaseSamples)));
+        std::cout << modeNames[static_cast<size_t> (mode)] << "ReleasedTailRMS=" << releaseTailRms
+                  << " ReleasedTailPeak=" << releaseTailPeak << '\n';
+        if (releaseTailRms > 1.0e-7 || releaseTailPeak > 1.0e-6f)
+        {
+            std::cerr << "FAIL: character mode " << modeNames[static_cast<size_t> (mode)]
+                      << " left noise after note-off\n";
+            return 14 + mode;
+        }
+        if (mode == 1)
+        {
+            setParameter (state, "liquid", 0.45f);
+            setParameter (state, "reflect", 0.35f);
+            setParameter (state, "shine", 0.55f);
+            setParameter (state, "density", 0.5f);
+            setParameter (state, "fusion", 0.4f);
         }
     }
 

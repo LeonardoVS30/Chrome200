@@ -61,6 +61,7 @@ private:
     std::array<DigitalProcessor, 3> digital;
     std::array<int, 3> lastModes { -1, -1, -1 };
     std::array<int, 3> modeFadeSamples {};
+    std::array<bool, 3> characterInputActive {};
     std::array<std::array<juce::dsp::IIR::Filter<float>, 2>, 2> filterStages;
     MasterEffects master;
     double rate = 44100.0;

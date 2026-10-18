@@ -152,8 +152,7 @@ int main()
         output.clear();
         instance->processBlock (output, midi);
         midi.clear();
-        peak = juce::jmax (peak, output.getMagnitude (0, output.getNumSamples()),
-                          output.getMagnitude (1, output.getNumSamples()));
+        peak = juce::jmax (peak, output.getMagnitude (0, output.getNumSamples()));
         for (int channel = 0; channel < output.getNumChannels(); ++channel)
             for (int sample = 0; sample < output.getNumSamples(); ++sample)
             {

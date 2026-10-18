@@ -12,6 +12,11 @@ public:
                            float startAngle, float endAngle, juce::Slider&) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour&, bool highlighted, bool down) override;
     void drawComboBox (juce::Graphics&, int width, int height, bool down, int, int, int, int, juce::ComboBox&) override;
+    void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
+    void drawPopupMenuItem (juce::Graphics&, const juce::Rectangle<int>& area,
+                            bool isSeparator, bool isActive, bool isHighlighted, bool isTicked, bool hasSubMenu,
+                            const juce::String& text, const juce::String& shortcutKeyText,
+                            const juce::Drawable* icon, const juce::Colour* textColour) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
     void positionComboBoxText (juce::ComboBox&, juce::Label&) override;
     juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
