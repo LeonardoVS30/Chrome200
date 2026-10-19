@@ -13,6 +13,9 @@ void ChromeProcessor::reset()
     liquidState.fill (0.0f);
     toneState.fill (0.0f);
     dynamicsEnvelope.fill (0.0f);
+    for (auto& channel : resonators)
+        for (auto& resonator : channel)
+            resonator = {};
 }
 
 void ChromeProcessor::process (juce::AudioBuffer<float>& buffer, const ChromeControls& c)
@@ -27,8 +30,30 @@ void ChromeProcessor::process (juce::AudioBuffer<float>& buffer, const ChromeCon
     const auto cutoff = 2400.0f + shine * 11600.0f;
     const auto toneCoefficient = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * cutoff
                                                    / static_cast<float> (rate));
-    const auto wetMix = 0.10f + fusion * 0.18f;
-    const auto outputGain = 0.92f - fusion * 0.10f;
+    const auto wetMix = 0.20f + fusion * 0.30f;
+    const auto outputGain = 0.96f - fusion * 0.08f;
+    constexpr std::array<float, resonatorCount> frequencyRatios { 1.0f, 1.497f, 2.113f, 2.879f };
+    constexpr std::array<std::array<float, resonatorCount>, 2> modeWeights
+    {{
+        { 0.34f, -0.27f, 0.22f, -0.17f },
+        { 0.30f, -0.31f, 0.18f, -0.22f }
+    }};
+    struct Coefficients { float b0, b2, a1, a2; };
+    std::array<Coefficients, resonatorCount> coefficients {};
+    const auto baseFrequency = 420.0f + shine * 480.0f;
+    const auto resonanceQ = 3.0f + reflect * 9.0f;
+    for (int mode = 0; mode < resonatorCount; ++mode)
+    {
+        const auto frequency = juce::jmin (static_cast<float> (rate * 0.42),
+                                           baseFrequency * frequencyRatios[static_cast<size_t> (mode)]);
+        const auto omega = juce::MathConstants<float>::twoPi * frequency / static_cast<float> (rate);
+        const auto alpha = std::sin (omega) / (2.0f * resonanceQ);
+        const auto inverseA0 = 1.0f / (1.0f + alpha);
+        coefficients[static_cast<size_t> (mode)] = { alpha * inverseA0,
+                                                      -alpha * inverseA0,
+                                                      -2.0f * std::cos (omega) * inverseA0,
+                                                      (1.0f - alpha) * inverseA0 };
+    }
 
     for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
     {
@@ -44,9 +69,21 @@ void ChromeProcessor::process (juce::AudioBuffer<float>& buffer, const ChromeCon
             low += (x - low) * toneCoefficient;
             const auto high = x - low;
             const auto detail = dry - smoothed;
-            x += high * shine * 0.12f;
-            x += detail * reflect * 0.07f;
-            x += (smoothed - dry) * fragment * 0.06f;
+            x += high * shine * 0.20f;
+            x += detail * reflect * 0.10f;
+            x += (smoothed - dry) * fragment * 0.10f;
+
+            float metallic = 0.0f;
+            for (int mode = 0; mode < resonatorCount; ++mode)
+            {
+                const auto& coefficient = coefficients[static_cast<size_t> (mode)];
+                auto& resonator = resonators[index][static_cast<size_t> (mode)];
+                const auto resonated = coefficient.b0 * x + resonator.z1;
+                resonator.z1 = -coefficient.a1 * resonated + resonator.z2;
+                resonator.z2 = coefficient.b2 * x - coefficient.a2 * resonated;
+                metallic += resonated * modeWeights[index][static_cast<size_t> (mode)];
+            }
+            x += metallic * reflect * (0.72f + density * 0.36f);
 
             auto& envelope = dynamicsEnvelope[index];
             const auto magnitude = std::abs (dry);

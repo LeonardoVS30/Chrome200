@@ -177,6 +177,30 @@ if(CHROME2000_BUILD_TESTS)
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
+    juce_add_console_app(Chrome2000CharacterDSP
+        PRODUCT_NAME "CHROME 2000 Character DSP Test")
+
+    juce_generate_juce_header(Chrome2000CharacterDSP)
+    target_sources(Chrome2000CharacterDSP PRIVATE
+        Tests/CharacterDSPTest.cpp
+        Source/DSP/VintageProcessor.cpp
+        Source/DSP/VintageProcessor.h
+        Source/DSP/ChromeProcessor.cpp
+        Source/DSP/ChromeProcessor.h
+        Source/DSP/DigitalProcessor.cpp
+        Source/DSP/DigitalProcessor.h)
+    target_compile_definitions(Chrome2000CharacterDSP PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_REPORT_APP_USAGE=0
+        DONT_SET_USING_JUCE_NAMESPACE=1)
+    target_link_libraries(Chrome2000CharacterDSP PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+        PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
     juce_add_console_app(Chrome2000ProcessorSmoke
         PRODUCT_NAME "CHROME 2000 Processor Smoke Test")
 
@@ -257,6 +281,7 @@ if(CHROME2000_BUILD_TESTS)
         juce::juce_recommended_warning_flags)
 
     add_test (NAME Chrome2000EngineSmoke COMMAND Chrome2000EngineSmoke)
+    add_test (NAME Chrome2000CharacterDSP COMMAND Chrome2000CharacterDSP)
     add_test (NAME Chrome2000ProcessorSmoke COMMAND Chrome2000ProcessorSmoke)
     add_test (NAME Chrome2000FeatureSmoke COMMAND Chrome2000FeatureSmoke)
     add_test (NAME Chrome2000EditorSnapshot COMMAND Chrome2000EditorSnapshot)

@@ -3,6 +3,7 @@
 #include "../Source/SampleEngine/SampleEngine.h"
 #include <iostream>
 #include <cmath>
+#include <vector>
 
 namespace
 {
@@ -77,6 +78,24 @@ double renderRms (chrome::SampleEngine& engine, juce::AudioProcessorValueTreeSta
             }
     }
     return std::sqrt (energy / static_cast<double> (juce::jmax (1, count)));
+}
+
+std::vector<float> renderLeftChannel (chrome::SampleEngine& engine, int blocks, bool triggerNote)
+{
+    juce::AudioBuffer<float> output (2, 512);
+    juce::MidiBuffer midi;
+    if (triggerNote) midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    std::vector<float> rendered (static_cast<size_t> (blocks * output.getNumSamples()));
+    int position = 0;
+    for (int block = 0; block < blocks; ++block)
+    {
+        output.clear();
+        engine.process (output, midi);
+        midi.clear();
+        for (int sample = 0; sample < output.getNumSamples(); ++sample)
+            rendered[static_cast<size_t> (position++)] = output.getSample (0, sample);
+    }
+    return rendered;
 }
 }
 
@@ -183,12 +202,19 @@ int main()
     engine.setBpm (60.0f);
     setParameter (state, "lfo1_sync", 1.0f);
     setParameter (state, "lfo1_depth", 1.0f);
-    const auto sync60 = renderRms (engine, state, 120, true);
+    const auto sync60 = renderLeftChannel (engine, 120, true);
     engine.reset();
     engine.setBpm (180.0f);
-    const auto sync180 = renderRms (engine, state, 120, true);
-    std::cout << "sync60=" << sync60 << " sync180=" << sync180 << '\n';
-    if (std::abs (sync180 - sync60) < 1e-6) { std::cerr << "FAIL: LFO sync did not respond to BPM\n"; ok = false; }
+    const auto sync180 = renderLeftChannel (engine, 120, true);
+    double syncDifferenceEnergy = 0.0;
+    for (size_t sample = 0; sample < sync60.size(); ++sample)
+    {
+        const auto difference = static_cast<double> (sync180[sample] - sync60[sample]);
+        syncDifferenceEnergy += difference * difference;
+    }
+    const auto syncDifferenceRms = std::sqrt (syncDifferenceEnergy / static_cast<double> (sync60.size()));
+    std::cout << "syncDifferenceRms=" << syncDifferenceRms << '\n';
+    if (syncDifferenceRms < 1e-5) { std::cerr << "FAIL: LFO sync did not respond to BPM\n"; ok = false; }
 
     // GLIDE: two consecutive notes with glide>0 should still produce audio
     setParameter (state, "lfo1_depth", 0.0f);

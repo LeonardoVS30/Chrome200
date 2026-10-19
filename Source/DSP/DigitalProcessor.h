@@ -13,10 +13,13 @@ public:
 
 private:
     juce::AudioBuffer<float> history;
+    double rate = 44100.0;
     int writePosition = 0;
-    std::array<float, 2> held {};
-    int holdCounter = 0;
+    int readPosition = 0;
+    int grainPosition = 0;
+    int grainLength = 0;
+    int samplesWritten = 0;
+    bool grainActive = false;
     uint32_t noiseState = 0x82a2f91u;
 };
 }
-
