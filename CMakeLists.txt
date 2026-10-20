@@ -79,6 +79,8 @@ target_sources(Chrome2000 PRIVATE
     Source/Parameters/ParameterLayout.h
     Source/SampleEngine/SampleData.cpp
     Source/SampleEngine/SampleData.h
+    Source/SampleEngine/PitchDetector.cpp
+    Source/SampleEngine/PitchDetector.h
     Source/SampleEngine/SampleLoader.cpp
     Source/SampleEngine/SampleLoader.h
     Source/SampleEngine/SampleEngine.cpp
@@ -149,6 +151,8 @@ if(CHROME2000_BUILD_TESTS)
         Source/Parameters/ParameterLayout.h
         Source/SampleEngine/SampleData.cpp
         Source/SampleEngine/SampleData.h
+        Source/SampleEngine/PitchDetector.cpp
+        Source/SampleEngine/PitchDetector.h
         Source/SampleEngine/SampleLoader.cpp
         Source/SampleEngine/SampleLoader.h
         Source/SampleEngine/SampleEngine.cpp
@@ -195,6 +199,29 @@ if(CHROME2000_BUILD_TESTS)
         JUCE_REPORT_APP_USAGE=0
         DONT_SET_USING_JUCE_NAMESPACE=1)
     target_link_libraries(Chrome2000CharacterDSP PRIVATE
+        juce::juce_audio_utils
+        juce::juce_dsp
+        PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+
+    juce_add_console_app(Chrome2000PitchAndTuning
+        PRODUCT_NAME "CHROME 2000 Pitch and Tuning Test")
+    juce_generate_juce_header(Chrome2000PitchAndTuning)
+    target_sources(Chrome2000PitchAndTuning PRIVATE
+        Tests/PitchAndTuningTest.cpp
+        Source/SampleEngine/PitchDetector.cpp
+        Source/SampleEngine/PitchDetector.h
+        Source/SampleEngine/SampleData.cpp
+        Source/SampleEngine/SampleData.h
+        Source/Engine/Voice.cpp
+        Source/Engine/Voice.h)
+    target_compile_definitions(Chrome2000PitchAndTuning PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_REPORT_APP_USAGE=0
+        DONT_SET_USING_JUCE_NAMESPACE=1)
+    target_link_libraries(Chrome2000PitchAndTuning PRIVATE
         juce::juce_audio_utils
         juce::juce_dsp
         PUBLIC
@@ -282,6 +309,7 @@ if(CHROME2000_BUILD_TESTS)
 
     add_test (NAME Chrome2000EngineSmoke COMMAND Chrome2000EngineSmoke)
     add_test (NAME Chrome2000CharacterDSP COMMAND Chrome2000CharacterDSP)
+    add_test (NAME Chrome2000PitchAndTuning COMMAND Chrome2000PitchAndTuning)
     add_test (NAME Chrome2000ProcessorSmoke COMMAND Chrome2000ProcessorSmoke)
     add_test (NAME Chrome2000FeatureSmoke COMMAND Chrome2000FeatureSmoke)
     add_test (NAME Chrome2000EditorSnapshot COMMAND Chrome2000EditorSnapshot)

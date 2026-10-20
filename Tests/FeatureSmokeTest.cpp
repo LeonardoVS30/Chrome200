@@ -108,6 +108,7 @@ int main()
     engine.prepare (44100.0, 512);
 
     if (state.getParameter ("delay_sync") == nullptr || state.getParameter ("delay_division") == nullptr
+        || state.getParameter ("s1_root_note") == nullptr
         || std::abs (chrome::params::delayDivisionQuarterNotes (4) - 1.0f) > 1.0e-6f
         || std::abs (chrome::params::delayDivisionQuarterNotes (6) - 2.0f / 3.0f) > 1.0e-6f)
     {
@@ -139,6 +140,20 @@ int main()
     setParameter (state, "legato", 0.0f);
 
     const auto base = renderRms (engine, state, 120, true);
+
+    // RESO is an independent, normalized resonance control; it must alter the
+    // response with the dedicated distortion stage bypassed.
+    setParameter (state, "filter_drive", 0.0f);
+    setParameter (state, "filter_cutoff", 220.0f);
+    setParameter (state, "filter_resonance", 0.0f);
+    engine.reset();
+    const auto lowResonanceRms = renderRms (engine, state, 80, true);
+    setParameter (state, "filter_resonance", 1.0f);
+    engine.reset();
+    const auto highResonanceRms = renderRms (engine, state, 80, true);
+    setParameter (state, "filter_cutoff", 8720.0f);
+    setParameter (state, "filter_resonance", 0.7f);
+    setParameter (state, "filter_drive", 2.88f);
 
     // Chorus wet mix actually applied
     engine.reset();
@@ -172,19 +187,24 @@ int main()
     setParameter (state, "reverb", 0.0f);
     // Filter drive
     engine.reset();
+    setParameter (state, "filter_drive", 0.0f);
+    const auto cleanDriveRms = renderRms (engine, state, 120, true);
+    engine.reset();
     setParameter (state, "filter_drive", 24.0f);
     const auto driveRms = renderRms (engine, state, 120, true);
     setParameter (state, "filter_drive", 2.88f);
 
     std::cout << "base=" << base << " chorus=" << chorusRms << " delay=" << delayRms
-              << " reverb=" << reverbRms << " drive=" << driveRms << '\n';
+              << " reverb=" << reverbRms << " cleanDrive=" << cleanDriveRms << " drive=" << driveRms
+              << " resoLow=" << lowResonanceRms << " resoHigh=" << highResonanceRms << '\n';
 
     bool ok = true;
     if (std::abs (chorusRms - base) < 1e-6) { std::cerr << "FAIL: chorus did not change output\n"; ok = false; }
     if (std::abs (delayRms - base) < 1e-6) { std::cerr << "FAIL: delay did not change output\n"; ok = false; }
     if (std::abs (delaySync180 - delaySync60) < 1e-5) { std::cerr << "FAIL: delay sync did not respond to BPM\n"; ok = false; }
     if (std::abs (reverbRms - base) < 1e-6) { std::cerr << "FAIL: reverb did not change output\n"; ok = false; }
-    if (std::abs (driveRms - base) < 1e-6) { std::cerr << "FAIL: filter_drive did not change output\n"; ok = false; }
+    if (std::abs (driveRms - cleanDriveRms) < 1e-5) { std::cerr << "FAIL: dedicated filter distortion did not change output\n"; ok = false; }
+    if (std::abs (highResonanceRms - lowResonanceRms) < 1e-5) { std::cerr << "FAIL: normalized resonance did not change filter response\n"; ok = false; }
 
     // Filter env amount + keytrack
     engine.reset();

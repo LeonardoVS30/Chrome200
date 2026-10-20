@@ -20,8 +20,14 @@ public:
     void process (juce::AudioBuffer<float>&, juce::MidiBuffer&);
     void loadSample (int slot, const juce::File&);
     void restoreSamplePath (int slot, const juce::String& path);
+    void writeSampleState (juce::ValueTree&) const;
+    void restoreSampleState (const juce::ValueTree&);
+    // Message-thread flush for headless clients that do not run a dispatch loop.
+    void flushPendingSampleUpdate() { handleUpdateNowIfNeeded(); }
     [[nodiscard]] std::shared_ptr<const SampleData> sample (int slot) const;
     [[nodiscard]] juce::String samplePath (int slot) const;
+    [[nodiscard]] float detectedRootPitch (int slot) const noexcept;
+    [[nodiscard]] float rootPitch (int slot) const noexcept;
     [[nodiscard]] float outputPeak() const noexcept { return peak.load (std::memory_order_relaxed); }
     void setBpm (float bpm) noexcept { currentBpm.store (juce::jlimit (20.0f, 400.0f, bpm), std::memory_order_relaxed); }
     std::function<void (int, const juce::String&)> sampleChanged;
@@ -43,16 +49,23 @@ private:
     struct SlotParameterPointers
     {
         std::atomic<float>* enabled = nullptr; std::atomic<float>* gain = nullptr; std::atomic<float>* tune = nullptr;
+        std::atomic<float>* rootPitch = nullptr;
         std::atomic<float>* fine = nullptr; std::atomic<float>* start = nullptr; std::atomic<float>* end = nullptr;
         std::atomic<float>* pan = nullptr; std::atomic<float>* loop = nullptr; std::atomic<float>* reverse = nullptr;
         std::atomic<float>* solo = nullptr; std::atomic<float>* mute = nullptr; std::atomic<float>* mode = nullptr;
     };
     std::array<SlotParameterPointers, 3> slotParameters;
     juce::AudioFormatManager formats;
-    SampleLoader loader;
     std::array<std::atomic<std::shared_ptr<const SampleData>>, 3> samples;
     std::array<juce::String, 3> paths, errors;
+    std::array<std::atomic<float>, 3> detectedRootPitches {};
+    std::array<std::atomic<float>, 3> pitchConfidences {};
+    std::array<std::atomic<uint64_t>, 3> sampleLoadGenerations {};
+    std::array<bool, 3> applyDetectedTuning {};
     mutable juce::CriticalSection metadataLock;
+    // Declared after every object touched by its callback so its worker thread
+    // is stopped before those callback targets are destroyed.
+    SampleLoader loader;
     std::array<Voice, 128> voices;
     std::array<juce::AudioBuffer<float>, 3> slotBuffers;
     std::array<juce::AudioBuffer<float>, 3> modeDryBuffers;

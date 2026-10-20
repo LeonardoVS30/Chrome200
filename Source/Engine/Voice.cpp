@@ -111,7 +111,8 @@ void Voice::render (std::array<juce::AudioBuffer<float>*, 3> outputs, int startS
             if (range < 2.0)
                 continue;
 
-            const auto semitones = glideNote - 60.0 + static_cast<double> (settings.tune);
+            const auto semitones = glideNote - static_cast<double> (settings.rootPitch)
+                                 + static_cast<double> (settings.tune);
             auto increment = source->sampleRate() / outputRate * std::exp2 (semitones / 12.0);
             if (settings.reverse)
                 increment = -increment;

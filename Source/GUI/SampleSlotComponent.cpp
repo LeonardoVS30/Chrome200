@@ -12,13 +12,40 @@ SampleSlotComponent::SampleSlotComponent (juce::AudioProcessorValueTreeState& pa
     fileName.setText ("No sample loaded", juce::dontSendNotification); fileName.setFont (juce::FontOptions (11.5f, juce::Font::bold));
     fileName.setColour (juce::Label::textColourId, juce::Colour (0xff292b2e));
     fileName.setJustificationType (juce::Justification::centredLeft);
-    for (auto* component : std::array<juce::Component*, 16> { &title, &fileName, &waveform, &browse, &loop, &reverse, &solo, &mute, &power, &mode, &gain, &tune, &fine, &start, &end, &pan }) addAndMakeVisible (component);
+    for (auto* component : std::array<juce::Component*, 18> { &title, &fileName, &waveform, &browse, &loop, &reverse, &solo, &mute, &power, &rootEdit, &mode, &gain, &rootPitch, &tune, &fine, &start, &end, &pan }) addAndMakeVisible (component);
     mode.addItemList ({ "Ethernal", "Chrome", "Digital" }, 1);
     mode.getProperties().set ("characterMode", true);
     mode.setColour (juce::ComboBox::textColourId, juce::Colour (0xff292b2e));
     mode.setColour (juce::ComboBox::arrowColourId, juce::Colour (0xff292b2e));
     modeAttachment = std::make_unique<ComboAttachment> (state, params::slotId (slot, "mode"), mode);
     configureKnob (gain, "gain", "GAIN"); configureKnob (tune, "tune", "TUNE"); configureKnob (fine, "fine", "FINE");
+    configureKnob (rootPitch, "root_note", "ROOT NOTE");
+    rootPitch.setSliderStyle (juce::Slider::LinearBar);
+    rootPitch.setTextBoxStyle (juce::Slider::TextBoxRight, false, 62, 20);
+    rootPitch.textFromValueFunction = [] (double value) { return formatMidiPitch (static_cast<float> (value)); };
+    rootPitch.valueFromTextFunction = [] (const juce::String& text)
+    {
+        constexpr std::array<const char*, 12> names { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        const auto cleaned = text.trim().toUpperCase();
+        for (int note = 0; note < 128; ++note)
+        {
+            const auto noteText = juce::String (names[static_cast<size_t> (note % 12)]) + juce::String (note / 12 - 1);
+            if (cleaned == noteText)
+                return static_cast<double> (note);
+            if (cleaned.startsWith (noteText))
+            {
+                const auto cents = cleaned.substring (noteText.length()).removeCharacters (" CT");
+                if (cents.startsWithChar ('+') || cents.startsWithChar ('-'))
+                    return static_cast<double> (note) + cents.getDoubleValue() * 0.01;
+            }
+        }
+        return text.getDoubleValue();
+    };
+    rootEdit.setComponentID (params::slotId (slot, "root_note") + "_editor");
+    rootEdit.setTooltip ("Edit this sample's root note and fine tuning");
+    rootEdit.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    rootEdit.onClick = [this] { editRootPitch(); };
+    rootEdit.setVisible (false);
     configureKnob (start, "start", "START"); configureKnob (end, "end", "END"); configureKnob (pan, "pan", "PAN");
     tune.setVisible (false); fine.setVisible (false); pan.setVisible (false);
     browse.setButtonText ({});
@@ -179,6 +206,8 @@ void SampleSlotComponent::paint (juce::Graphics& g)
 void SampleSlotComponent::setFigmaSkinMode (bool enabled)
 {
     figmaSkinMode = enabled;
+    rootPitch.setVisible (! enabled);
+    rootEdit.setVisible (enabled);
     constexpr float hitTargetAlpha = 0.001f;
     for (auto* component : { static_cast<juce::Component*> (&title),
                              static_cast<juce::Component*> (&fileName),
@@ -188,7 +217,8 @@ void SampleSlotComponent::setFigmaSkinMode (bool enabled)
                               static_cast<juce::Component*> (&reverse),
                               static_cast<juce::Component*> (&solo),
                               static_cast<juce::Component*> (&mute),
-                              static_cast<juce::Component*> (&power) })
+                              static_cast<juce::Component*> (&power),
+                              static_cast<juce::Component*> (&rootEdit) })
         component->setAlpha (enabled ? hitTargetAlpha : 1.0f);
     repaint();
 }
@@ -221,6 +251,8 @@ void SampleSlotComponent::resized()
     constexpr std::array<float, 3> waveformX { 27.0f, 25.5f, 27.3f };
     constexpr std::array<float, 3> waveformW { 560.0f, 529.1f, 565.4f };
     waveform.setBounds (slotRect (waveformX[index], 119.0f, waveformW[index], 122.0f));
+    rootPitch.setBounds (slotRect (390.0f, 250.0f, 176.0f, 34.0f));
+    rootEdit.setBounds (rootPitch.getBounds());
     constexpr std::array<float, 3> smallStateX { 541.0f, 502.0f, 538.0f };
     constexpr std::array<float, 3> smallStateY { 132.0f, 135.0f, 134.0f };
     solo.setBounds (slotRect (smallStateX[index], smallStateY[index], 40.5f, 41.5f));
@@ -261,10 +293,46 @@ void SampleSlotComponent::chooseFile()
                           [safe] (const juce::FileChooser& fc) { if (safe != nullptr && fc.getResult().existsAsFile()) safe->engine.loadSample (safe->slotIndex, fc.getResult()); });
 }
 
+void SampleSlotComponent::editRootPitch()
+{
+    auto window = std::make_unique<juce::AlertWindow> (
+        "Sample " + juce::String (slotIndex + 1) + " root note",
+        "Enter a note such as C4 or D#3, or a fractional MIDI note for cent-level tuning.",
+        juce::MessageBoxIconType::NoIcon);
+    window->addTextEditor ("root", formatMidiPitch (static_cast<float> (rootPitch.getValue())));
+    window->addButton ("Set", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    const auto safe = juce::Component::SafePointer<SampleSlotComponent> (this);
+    auto* raw = window.release();
+    raw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, raw] (int result)
+    {
+        std::unique_ptr<juce::AlertWindow> owner (raw);
+        if (safe != nullptr && result == 1)
+        {
+            const auto value = safe->rootPitch.valueFromTextFunction (raw->getTextEditorContents ("root"));
+            safe->rootPitch.setValue (juce::jlimit (0.0, 127.0, value), juce::sendNotificationSync);
+        }
+    }), false);
+}
+
 void SampleSlotComponent::refresh()
 {
     const auto loaded = engine.sample (slotIndex);
     waveform.setSample (loaded);
     fileName.setText (loaded ? loaded->file().getFileName() : "No sample loaded", juce::dontSendNotification);
+    if (loaded != nullptr && loaded->detectedPitch().isValid())
+    {
+        rootPitch.setDoubleClickReturnValue (true, loaded->detectedPitch().midiPitch);
+        const auto tooltip = "Detected " + formatMidiPitch (loaded->detectedPitch().midiPitch)
+                           + ". Click ROOT to correct this slot's tuning.";
+        rootPitch.setTooltip (tooltip);
+        rootEdit.setTooltip (tooltip);
+    }
+    else
+    {
+        rootPitch.setDoubleClickReturnValue (false, 60.0);
+        rootPitch.setTooltip ("Root tuning was not detected. Drag or type a MIDI note value.");
+        rootEdit.setTooltip ("Root tuning was not detected. Click ROOT to enter a note or MIDI value.");
+    }
 }
 }

@@ -3,14 +3,23 @@
 namespace chrome
 {
 SampleEngine::SampleEngine (juce::AudioProcessorValueTreeState& parameters)
-    : state (parameters), loader (formats, [this] (int slot, std::shared_ptr<const SampleData> loaded, juce::String error)
+    : state (parameters), loader (formats, [this] (int slot, std::shared_ptr<const SampleData> loaded, juce::String error, bool applyTuning, uint64_t generation)
       {
           if (slot < 0 || slot >= 3) return;
+          if (sampleLoadGenerations[static_cast<size_t> (slot)].load (std::memory_order_acquire) != generation)
+              return;
           samples[static_cast<size_t> (slot)].store (std::move (loaded), std::memory_order_release);
+          const auto current = samples[static_cast<size_t> (slot)].load (std::memory_order_acquire);
+          const auto detected = current != nullptr && current->detectedPitch().isValid()
+                                  ? current->detectedPitch().midiPitch : -1.0f;
+          const auto confidence = current != nullptr ? current->detectedPitch().confidence : 0.0f;
+          detectedRootPitches[static_cast<size_t> (slot)].store (detected, std::memory_order_release);
+          pitchConfidences[static_cast<size_t> (slot)].store (confidence, std::memory_order_release);
           {
               const juce::ScopedLock lock (metadataLock);
               errors[static_cast<size_t> (slot)] = std::move (error);
-              if (const auto current = samples[static_cast<size_t> (slot)].load (std::memory_order_acquire))
+              applyDetectedTuning[static_cast<size_t> (slot)] = applyTuning && detected >= 0.0f;
+              if (current != nullptr)
                   paths[static_cast<size_t> (slot)] = current->file().getFullPathName();
           }
           triggerAsyncUpdate();
@@ -21,11 +30,15 @@ SampleEngine::SampleEngine (juce::AudioProcessorValueTreeState& parameters)
     {
         auto& p = slotParameters[static_cast<size_t> (slot)];
         p.enabled = state.getRawParameterValue (params::slotId (slot, "enabled")); p.gain = state.getRawParameterValue (params::slotId (slot, "gain"));
+        p.rootPitch = state.getRawParameterValue (params::slotId (slot, "root_note"));
         p.tune = state.getRawParameterValue (params::slotId (slot, "tune")); p.fine = state.getRawParameterValue (params::slotId (slot, "fine"));
         p.start = state.getRawParameterValue (params::slotId (slot, "start")); p.end = state.getRawParameterValue (params::slotId (slot, "end"));
         p.pan = state.getRawParameterValue (params::slotId (slot, "pan")); p.loop = state.getRawParameterValue (params::slotId (slot, "loop"));
         p.reverse = state.getRawParameterValue (params::slotId (slot, "reverse")); p.solo = state.getRawParameterValue (params::slotId (slot, "solo"));
         p.mute = state.getRawParameterValue (params::slotId (slot, "mute")); p.mode = state.getRawParameterValue (params::slotId (slot, "mode"));
+        detectedRootPitches[static_cast<size_t> (slot)].store (-1.0f, std::memory_order_relaxed);
+        pitchConfidences[static_cast<size_t> (slot)].store (0.0f, std::memory_order_relaxed);
+        sampleLoadGenerations[static_cast<size_t> (slot)].store (0, std::memory_order_relaxed);
     }
 }
 
@@ -74,22 +87,72 @@ void SampleEngine::reset()
     modeFadeSamples.fill (0);
     characterInputActive.fill (false);
     for (auto& buffer : modeDryBuffers) buffer.clear();
-    {
-        const juce::ScopedLock lock (metadataLock);
-        paths.fill ({});
-        errors.fill ({});
-    }
 }
 
 void SampleEngine::loadSample (int slot, const juce::File& file)
 {
     if (slot >= 0 && slot < 3 && file.existsAsFile())
-        loader.load (slot, file);
+    {
+        {
+            const juce::ScopedLock lock (metadataLock);
+            paths[static_cast<size_t> (slot)] = file.getFullPathName();
+        }
+        const auto generation = sampleLoadGenerations[static_cast<size_t> (slot)].fetch_add (1, std::memory_order_acq_rel) + 1;
+        loader.load (slot, file, true, generation);
+    }
 }
 
 void SampleEngine::restoreSamplePath (int slot, const juce::String& path)
 {
-    if (path.isNotEmpty()) loadSample (slot, juce::File (path));
+    if (slot >= 0 && slot < 3)
+    {
+        const auto generation = sampleLoadGenerations[static_cast<size_t> (slot)].fetch_add (1, std::memory_order_acq_rel) + 1;
+        const juce::File file (path);
+        {
+            const juce::ScopedLock lock (metadataLock);
+            paths[static_cast<size_t> (slot)] = path;
+            errors[static_cast<size_t> (slot)] = path.isNotEmpty() && ! file.existsAsFile()
+                                                      ? "The saved sample file could not be found." : juce::String();
+        }
+        if (file.existsAsFile())
+            loader.load (slot, file, false, generation);
+        else
+        {
+            samples[static_cast<size_t> (slot)].store ({}, std::memory_order_release);
+            if (path.isEmpty())
+            {
+                detectedRootPitches[static_cast<size_t> (slot)].store (-1.0f, std::memory_order_release);
+                pitchConfidences[static_cast<size_t> (slot)].store (0.0f, std::memory_order_release);
+            }
+            triggerAsyncUpdate();
+        }
+    }
+}
+
+void SampleEngine::writeSampleState (juce::ValueTree& tree) const
+{
+    tree.setProperty ("stateSchemaVersion", 2, nullptr);
+    for (int slot = 0; slot < 3; ++slot)
+    {
+        tree.setProperty ("samplePath" + juce::String (slot), samplePath (slot), nullptr);
+        tree.setProperty ("sampleDetectedRoot" + juce::String (slot), detectedRootPitch (slot), nullptr);
+        tree.setProperty ("samplePitchConfidence" + juce::String (slot),
+                          pitchConfidences[static_cast<size_t> (slot)].load (std::memory_order_acquire), nullptr);
+    }
+}
+
+void SampleEngine::restoreSampleState (const juce::ValueTree& tree)
+{
+    for (int slot = 0; slot < 3; ++slot)
+    {
+        detectedRootPitches[static_cast<size_t> (slot)].store (
+            static_cast<float> (tree.getProperty ("sampleDetectedRoot" + juce::String (slot), -1.0f)),
+            std::memory_order_release);
+        pitchConfidences[static_cast<size_t> (slot)].store (
+            static_cast<float> (tree.getProperty ("samplePitchConfidence" + juce::String (slot), 0.0f)),
+            std::memory_order_release);
+        restoreSamplePath (slot, tree.getProperty ("samplePath" + juce::String (slot)).toString());
+    }
 }
 
 std::shared_ptr<const SampleData> SampleEngine::sample (int slot) const
@@ -104,12 +167,40 @@ juce::String SampleEngine::samplePath (int slot) const
     return slot >= 0 && slot < 3 ? paths[static_cast<size_t> (slot)] : juce::String();
 }
 
+float SampleEngine::detectedRootPitch (int slot) const noexcept
+{
+    if (slot < 0 || slot >= 3) return -1.0f;
+    return detectedRootPitches[static_cast<size_t> (slot)].load (std::memory_order_acquire);
+}
+
+float SampleEngine::rootPitch (int slot) const noexcept
+{
+    if (slot < 0 || slot >= 3) return 60.0f;
+    const auto* value = slotParameters[static_cast<size_t> (slot)].rootPitch;
+    return value != nullptr ? value->load (std::memory_order_relaxed) : 60.0f;
+}
+
 void SampleEngine::handleAsyncUpdate()
 {
-    if (! sampleChanged) return;
-    const juce::ScopedLock lock (metadataLock);
+    std::array<bool, 3> shouldApply {};
+    std::array<juce::String, 3> currentErrors;
+    {
+        const juce::ScopedLock lock (metadataLock);
+        shouldApply = applyDetectedTuning;
+        applyDetectedTuning.fill (false);
+        currentErrors = errors;
+    }
     for (int slot = 0; slot < 3; ++slot)
-        sampleChanged (slot, errors[static_cast<size_t> (slot)]);
+    {
+        if (shouldApply[static_cast<size_t> (slot)])
+            if (auto* parameter = state.getParameter (params::slotId (slot, "root_note")))
+            {
+                const auto detected = detectedRootPitch (slot);
+                parameter->setValueNotifyingHost (parameter->convertTo0to1 (detected));
+            }
+        if (sampleChanged)
+            sampleChanged (slot, currentErrors[static_cast<size_t> (slot)]);
+    }
 }
 
 std::array<SlotPlayback, 3> SampleEngine::makeSlotSettings (const ModulationValues& modulation) const
@@ -123,6 +214,7 @@ std::array<SlotPlayback, 3> SampleEngine::makeSlotSettings (const ModulationValu
         auto& s = result[static_cast<size_t> (slot)];
         const auto& p = slotParameters[static_cast<size_t> (slot)];
         s.sample = sample (slot);
+        s.rootPitch = read (p.rootPitch);
         s.gain = juce::Decibels::decibelsToGain (read (p.gain)); s.pan = read (p.pan);
         s.start = juce::jlimit (0.0f, 0.99f, read (p.start) + modulation.position * 0.2f);
         s.end = juce::jlimit (0.01f, 1.0f, read (p.end) + modulation.position * 0.2f);
@@ -247,10 +339,20 @@ void SampleEngine::processFilter (juce::AudioBuffer<float>& buffer, float modula
     float cutoff = baseCutoff * std::exp2 (static_cast<float> (keytrackNote - 60) / 12.0f * keytrackAmount);
     cutoff = juce::jlimit (20.0f, static_cast<float> (rate * 0.45), cutoff * std::pow (2.0f, filterEnvValue * envAmount * 4.0f));
     const auto modulated = juce::jlimit (20.0f, static_cast<float> (rate * 0.45), cutoff * std::exp2 (modulation * 5.0f));
-    const auto q = params::load (state, "filter_resonance");
-    const auto drive = juce::Decibels::decibelsToGain (params::load (state, "filter_drive"));
+    const auto resonance = juce::jlimit (0.0f, 1.0f, params::load (state, "filter_resonance"));
+    const auto q = 0.70710678f + resonance * resonance * 11.29289322f;
+    const auto driveDb = juce::jlimit (0.0f, 24.0f, params::load (state, "filter_drive"));
+    const auto drive = juce::Decibels::decibelsToGain (driveDb);
+    const auto distortionMix = driveDb / 24.0f;
     const auto type = static_cast<int> (params::load (state, "filter_type"));
-    buffer.applyGain (drive);
+    if (distortionMix > 0.0f)
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                const auto dry = buffer.getSample (ch, i);
+                const auto saturated = std::tanh (dry * drive);
+                buffer.setSample (ch, i, dry + (saturated - dry) * distortionMix);
+            }
     auto coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (rate, modulated, q);
     if (type == 1) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (rate, modulated, q);
     else if (type == 2) coefficients = juce::dsp::IIR::ArrayCoefficients<float>::makeBandPass (rate, modulated, q);

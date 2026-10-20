@@ -1,6 +1,6 @@
 #pragma once
 
-#include <JuceHeader.h>
+#include "PitchDetector.h"
 
 namespace chrome
 {
@@ -16,6 +16,7 @@ public:
     [[nodiscard]] const juce::File& file() const noexcept { return source; }
     [[nodiscard]] const std::vector<float>& peaks() const noexcept { return displayPeaks; }
     [[nodiscard]] const std::vector<float>& spectrum() const noexcept { return displaySpectrum; }
+    [[nodiscard]] const PitchDetectionResult& detectedPitch() const noexcept { return pitch; }
 
 private:
     juce::AudioBuffer<float> buffer;
@@ -23,5 +24,6 @@ private:
     juce::File source;
     std::vector<float> displayPeaks;
     std::vector<float> displaySpectrum;
+    PitchDetectionResult pitch;
 };
 }

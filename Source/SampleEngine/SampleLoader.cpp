@@ -15,12 +15,12 @@ SampleLoader::~SampleLoader()
     stopThread (3000);
 }
 
-void SampleLoader::load (int slot, const juce::File& file)
+void SampleLoader::load (int slot, const juce::File& file, bool applyDetectedTuning, uint64_t generation)
 {
     {
         const juce::ScopedLock lock (queueLock);
         std::erase_if (queue, [slot] (const Request& request) { return request.slot == slot; });
-        queue.push_back ({ slot, file });
+        queue.push_back ({ slot, file, applyDetectedTuning, generation });
     }
     notify();
 }
@@ -65,7 +65,7 @@ void SampleLoader::run()
         }
 
         if (completion)
-            completion (request.slot, std::move (result), error);
+            completion (request.slot, std::move (result), error, request.applyDetectedTuning, request.generation);
     }
 }
 }

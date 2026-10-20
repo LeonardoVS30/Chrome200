@@ -13,6 +13,7 @@ struct SlotPlayback
     float start = 0.0f;
     float end = 1.0f;
     float tune = 0.0f;
+    float rootPitch = 60.0f;
     bool loop = true;
     bool reverse = false;
     bool audible = true;

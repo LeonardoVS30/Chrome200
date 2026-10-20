@@ -30,6 +30,16 @@ int main()
         }
     }
 
+    auto* sampleSlot = editor->findChildWithID ("sampleSlot1");
+    auto* rootEditor = sampleSlot != nullptr
+                         ? dynamic_cast<juce::Button*> (sampleSlot->findChildWithID ("s1_root_note_editor"))
+                         : nullptr;
+    if (rootEditor == nullptr || rootEditor->getWidth() < 50 || rootEditor->getHeight() < 10)
+    {
+        std::cerr << "FAIL: sample root note has no usable editor target\n";
+        return 17;
+    }
+
     auto snapshot = editor->createComponentSnapshot (editor->getLocalBounds(), true, 1.0f);
     const auto destination = juce::File ("C:\\tmp\\chrome2000-current-snapshot.png");
     destination.deleteFile();

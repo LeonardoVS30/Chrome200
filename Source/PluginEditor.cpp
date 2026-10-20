@@ -432,6 +432,7 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
     for (int i = 0; i < 3; ++i)
     {
         slots[static_cast<size_t> (i)] = std::make_unique<chrome::SampleSlotComponent> (p.parameters, p.engine, i);
+        slots[static_cast<size_t> (i)]->setComponentID ("sampleSlot" + juce::String (i + 1));
         slots[static_cast<size_t> (i)]->setFigmaSkinMode (true);
         addAndMakeVisible (*slots[static_cast<size_t> (i)]);
     }
@@ -449,7 +450,7 @@ Chrome2000AudioProcessorEditor::Chrome2000AudioProcessorEditor (Chrome2000AudioP
 
     addKnob (filterKnobs, "filter_cutoff", "CUTOFF", true, true);
     addKnob (filterKnobs, "filter_resonance", "RESO");
-    addKnob (filterKnobs, "filter_drive", "DRIVE");
+    addKnob (filterKnobs, "filter_drive", "DIST");
     addKnob (filterKnobs, "filter_env_amount", "ENV");
     addKnob (filterKnobs, "filter_keytrack", "KEYTRK");
     addKnob (envelopeKnobs, "amp_attack", "ATTACK");
@@ -693,6 +694,16 @@ void Chrome2000AudioProcessorEditor::paint (juce::Graphics& g)
                                     + " kHz / 24 bit / "
                                     + (sample->channels() == 1 ? "Mono" : "Stereo");
                 g.drawText (metadata, metadataArea, juce::Justification::centredLeft);
+
+                const auto rootArea = designRect (*this,
+                                                   slotX[static_cast<size_t> (slot)] + 390.0f * xScale,
+                                                   443.5f, 176.0f * xScale, 28.0f);
+                g.setColour (juce::Colour (0xffb9b8b8));
+                g.fillRect (rootArea);
+                g.setColour (juce::Colour (0xff34373a));
+                g.setFont (juce::FontOptions (18.0f * sy, juce::Font::bold));
+                g.drawFittedText ("ROOT " + chrome::formatMidiPitch (processor.engine.rootPitch (slot)),
+                                  rootArea.getSmallestIntegerContainer(), juce::Justification::centred, 1);
             }
             else
             {

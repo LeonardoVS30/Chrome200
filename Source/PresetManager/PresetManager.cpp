@@ -56,7 +56,7 @@ void PresetManager::applyFactory (const juce::String& name)
     setActual ("liquid", 0.45f); setActual ("reflect", 0.35f); setActual ("fragment", 0.25f);
     setActual ("shine", 0.55f); setActual ("density", 0.5f); setActual ("fusion", 0.4f);
     setActual ("chorus", 0.25f); setActual ("delay", 0.30f); setActual ("reverb", 0.35f);
-    setActual ("filter_cutoff", 8720.0f); setActual ("filter_resonance", 0.05f); setActual ("filter_drive", 2.88f);
+    setActual ("filter_cutoff", 8720.0f); setActual ("filter_resonance", 0.25f); setActual ("filter_drive", 2.88f);
     setActual ("amp_attack", 0.01f); setActual ("amp_decay", 0.25f); setActual ("amp_sustain", 0.75f); setActual ("amp_release", 0.29f);
     setActual ("lfo1_depth", 0.25f); setActual ("mod1_source", 1.0f); setActual ("mod1_destination", 1.0f); setActual ("mod1_depth", 0.25f);
     setActual ("master_gain", -3.0f);
@@ -79,8 +79,7 @@ bool PresetManager::load (const juce::String& name)
         const auto tree = juce::ValueTree::fromXml (*xml);
         if (tree.isValid())
         {
-            for (int i = 0; i < 3; ++i) engine.restoreSamplePath (i, tree.getProperty ("samplePath" + juce::String (i)).toString());
-            state.replaceState (tree); current = name; return true;
+            state.replaceState (tree); engine.restoreSampleState (tree); current = name; return true;
         }
     }
     return false;
@@ -90,7 +89,7 @@ bool PresetManager::save (const juce::String& name)
 {
     if (name.trim().isEmpty()) return false;
     auto tree = state.copyState();
-    for (int i = 0; i < 3; ++i) tree.setProperty ("samplePath" + juce::String (i), engine.samplePath (i), nullptr);
+    engine.writeSampleState (tree);
     if (auto xml = tree.createXml())
     {
         const auto ok = xml->writeTo (directory().getChildFile (juce::File::createLegalFileName (name.trim()) + ".c2preset"));

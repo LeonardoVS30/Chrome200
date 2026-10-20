@@ -60,6 +60,35 @@ int main()
         return 2;
     }
 
+    processor.engine.flushPendingSampleUpdate();
+    const auto detectedRoot = processor.engine.detectedRootPitch (0);
+    const auto appliedRoot = chrome::params::load (processor.parameters, "s1_root_note");
+    if (std::abs (detectedRoot - 64.02f) > 0.10f || std::abs (appliedRoot - detectedRoot) > 0.02f)
+    {
+        std::cerr << "FAIL: detected root was not applied, detected=" << detectedRoot
+                  << " applied=" << appliedRoot << '\n';
+        return 5;
+    }
+
+    constexpr float correctedRoot = 62.37f;
+    setParameter (processor.parameters, "s1_root_note", correctedRoot);
+    juce::MemoryBlock savedState;
+    processor.getStateInformation (savedState);
+    {
+        Chrome2000AudioProcessor restored;
+        restored.setStateInformation (savedState.getData(), static_cast<int> (savedState.getSize()));
+        const auto restoredRoot = chrome::params::load (restored.parameters, "s1_root_note");
+        const auto restoredDetected = restored.engine.detectedRootPitch (0);
+        if (std::abs (restoredRoot - correctedRoot) > 0.02f
+            || std::abs (restoredDetected - detectedRoot) > 0.02f
+            || restored.engine.samplePath (0) != wave.getFullPathName())
+        {
+            std::cerr << "FAIL: tuning metadata state round-trip, root=" << restoredRoot
+                      << " detected=" << restoredDetected << '\n';
+            return 6;
+        }
+    }
+
     setParameter (processor.parameters, "power", 1.0f);
     setParameter (processor.parameters, "s1_enabled", 1.0f);
     setParameter (processor.parameters, "s1_mute", 0.0f);
@@ -114,6 +143,8 @@ int main()
     processor.releaseResources();
     std::cout << "ProcessorPeak=" << peak
               << " ProcessorRMS=" << rms
+              << " DetectedRoot=" << detectedRoot
+              << " CorrectedRoot=" << correctedRoot
               << " TailRMS=" << tailRms
               << " TailACRMS=" << tailAcRms
               << " TailDC=" << tailMean << '\n';

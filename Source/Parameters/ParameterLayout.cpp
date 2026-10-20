@@ -21,6 +21,7 @@ void addSlot (juce::AudioProcessorValueTreeState::ParameterLayout& layout, int s
     constexpr std::array<int, 3> defaultMode { 2, 1, 0 };
     layout.add (std::make_unique<APB> (id (prefix + "enabled"), title + "On", true));
     layout.add (std::make_unique<APF> (id (prefix + "gain"), title + "Gain", juce::NormalisableRange<float> (-60.0f, 6.0f, 0.01f), defaultGain[static_cast<size_t> (slot)]));
+    layout.add (std::make_unique<APF> (id (prefix + "root_note"), title + "Root Note", juce::NormalisableRange<float> (0.0f, 127.0f, 0.01f), 60.0f));
     layout.add (std::make_unique<API> (id (prefix + "tune"), title + "Tune", -24, 24, 0));
     layout.add (std::make_unique<APF> (id (prefix + "fine"), title + "Fine", juce::NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f));
     layout.add (std::make_unique<APF> (id (prefix + "start"), title + "Start", 0.0f, 1.0f, defaultStart[static_cast<size_t> (slot)]));
@@ -80,7 +81,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     layout.add (std::make_unique<APC> (id ("filter_type"), "Filter Type", juce::StringArray { "Low Pass", "High Pass", "Band Pass", "Notch" }, 0));
     layout.add (std::make_unique<APF> (id ("filter_cutoff"), "Filter Cutoff", juce::NormalisableRange<float> (20.0f, 20000.0f, 0.01f, 0.22f), 8720.0f));
-    layout.add (std::make_unique<APF> (id ("filter_resonance"), "Filter Resonance", 0.05f, 10.0f, 0.05f));
+    layout.add (std::make_unique<APF> (id ("filter_resonance"), "Filter Resonance", 0.0f, 1.0f, 0.25f));
     layout.add (std::make_unique<APF> (id ("filter_drive"), "Filter Drive", 0.0f, 24.0f, 2.88f));
     layout.add (std::make_unique<APF> (id ("filter_env_amount"), "Filter Envelope Amount", -1.0f, 1.0f, 0.0f));
     layout.add (std::make_unique<APF> (id ("filter_keytrack"), "Filter Key Tracking", 0.0f, 1.0f, 0.0f));

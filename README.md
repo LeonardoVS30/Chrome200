@@ -40,26 +40,26 @@ El VST3 se genera en `build/vs2022-x64/Chrome2000_artefacts/Release/VST3/CHROME 
 ## Flujo de uso
 
 1. Arrastre WAV, AIFF o FLAC a cualquiera de los tres slots. Se aceptan archivos mono/estéreo, PCM de hasta 24 bits y float de 32 bits mediante los lectores de JUCE.
-2. Ajuste inicio/fin, loop, reverse, afinación, panorama y ganancia por fuente.
+2. Revise la nota `ROOT` detectada al cargar cada muestra. Pulse su indicador para corregir nota y cents por slot; después ajuste inicio/fin, loop, reverse, panorama y ganancia.
 3. Seleccione por slot `Vintage`, `Chrome` o `Digital`.
 4. Use Morph X/Y para ponderar las tres fuentes y los seis controles Chrome para definir la transformación.
 5. Guarde el preset desde la barra superior. Los presets de usuario se almacenan en `%APPDATA%\LEVSAN\CHROME 2000\Presets` y conservan parámetros y rutas de las tres muestras.
 
 ## Arquitectura de audio
 
-- `SampleLoader`: decodificación en hilo de baja prioridad y publicación atómica de audio inmutable.
-- `Voice`: reproducción interpolada, ADSR, velocidad, loop/reverse y panorama; hasta 128 instancias preasignadas.
-- `SampleEngine`: planificación MIDI por offsets exactos, mezcla de tres buses y robo de la voz más antigua.
+- `SampleLoader`: decodificación y detección acotada de altura en hilo de baja prioridad, con publicación atómica de audio inmutable.
+- `Voice`: reproducción interpolada relativa a la nota raíz independiente de cada slot, ADSR, velocidad, loop/reverse y panorama; hasta 128 instancias preasignadas.
+- `SampleEngine`: planificación MIDI por offsets exactos, mezcla de tres buses, filtro multimodo con resonancia normalizada y saturación `DIST` independiente, y robo de la voz más antigua.
 - `VintageProcessor`: saturación suave, compresión dependiente de envolvente, head bump, wow/flutter, ruido y roll-off.
 - `ChromeProcessor`: memoria espectral FFT parcial, ocho resonadores modales inarmónicos, microfragmentación adaptativa, red de cuatro all-pass, comb dinámico y brillo por micro-frequency modulation.
 - `DigitalProcessor`: nube de microcortes con densidad y textura variables.
-- `MasterEffects`: filtro multimodo 12/24 dB, chorus, delay, reverb, compresor, EQ, anchura M/S, soft clip y limitador.
+- `MasterEffects`: chorus, delay, reverb, compresor, EQ, anchura M/S, soft clip y limitador.
 
 Las voces, buffers de buses, FFT, delays y efectos se asignan en `prepareToPlay`; el callback no crea buffers ni realiza E/S. La carga de archivos y las notificaciones de GUI están fuera del hilo de audio.
 
 ## Automatización y estado
 
-Todos los controles de síntesis y efectos se publican mediante `AudioProcessorValueTreeState`, incluyendo tres LFO, ocho rutas de matriz de modulación, polifonía, oversampling y power. El host recibe identificadores estables versionados. El estado de sesión VST3 incluye las rutas de muestras y todos los parámetros.
+Todos los controles de síntesis y efectos se publican mediante `AudioProcessorValueTreeState`, incluyendo la nota raíz corregida de cada slot, tres LFO, ocho rutas de matriz de modulación, polifonía, oversampling y power. El host recibe identificadores estables versionados. El estado de sesión VST3 y los presets incluyen rutas, altura detectada, confianza del análisis y correcciones del usuario.
 
 ## Presets incluidos
 

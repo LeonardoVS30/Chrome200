@@ -25,15 +25,16 @@ private:
     using ComboAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     void configureKnob (juce::Slider&, const juce::String& suffix, const juce::String& tooltip);
     void chooseFile();
+    void editRootPitch();
 
     juce::AudioProcessorValueTreeState& state;
     SampleEngine& engine;
     int slotIndex;
     juce::Label title, fileName;
     WaveformComponent waveform;
-    juce::TextButton browse { "LOAD" }, loop { "LOOP" }, reverse { "REV" }, solo { "S" }, mute { "M" }, power { "ON" };
+    juce::TextButton browse { "LOAD" }, loop { "LOOP" }, reverse { "REV" }, solo { "S" }, mute { "M" }, power { "ON" }, rootEdit { "ROOT" };
     juce::ComboBox mode;
-    juce::Slider gain, tune, fine, start, end, pan;
+    juce::Slider gain, rootPitch, tune, fine, start, end, pan;
     std::vector<std::unique_ptr<SliderAttachment>> sliderAttachments;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;
     std::unique_ptr<ComboAttachment> modeAttachment;

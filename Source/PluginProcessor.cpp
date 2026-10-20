@@ -46,7 +46,7 @@ juce::AudioProcessorEditor* Chrome2000AudioProcessor::createEditor()
 void Chrome2000AudioProcessor::getStateInformation (juce::MemoryBlock& destination)
 {
     auto tree = parameters.copyState();
-    for (int i = 0; i < 3; ++i) tree.setProperty ("samplePath" + juce::String (i), engine.samplePath (i), nullptr);
+    engine.writeSampleState (tree);
     if (auto xml = tree.createXml()) copyXmlToBinary (*xml, destination);
 }
 
@@ -57,8 +57,8 @@ void Chrome2000AudioProcessor::setStateInformation (const void* data, int size)
         const auto tree = juce::ValueTree::fromXml (*xml);
         if (tree.isValid() && tree.hasType (parameters.state.getType()))
         {
-            for (int i = 0; i < 3; ++i) engine.restoreSamplePath (i, tree.getProperty ("samplePath" + juce::String (i)).toString());
             parameters.replaceState (tree);
+            engine.restoreSampleState (tree);
         }
     }
 }

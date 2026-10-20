@@ -347,16 +347,16 @@ int main()
     };
     zeroSilence();
     reflective.process (silence, chromeControls);
-    const auto chromeSilence = juce::jmax (silence.getMagnitude (0, silence.getNumSamples()),
-                                          silence.getMagnitude (1, silence.getNumSamples()));
+    const auto chromeSilence = juce::jmax (silence.getMagnitude (0, 0, silence.getNumSamples()),
+                                          silence.getMagnitude (1, 0, silence.getNumSamples()));
     zeroSilence();
     ethernalImpulse.process (silence, 0.72f);
-    const auto ethernalSilence = juce::jmax (silence.getMagnitude (0, silence.getNumSamples()),
-                                            silence.getMagnitude (1, silence.getNumSamples()));
+    const auto ethernalSilence = juce::jmax (silence.getMagnitude (0, 0, silence.getNumSamples()),
+                                            silence.getMagnitude (1, 0, silence.getNumSamples()));
     zeroSilence();
     digitalImpulse.process (silence, 0.50f, 0.25f);
-    const auto digitalSilence = juce::jmax (silence.getMagnitude (0, silence.getNumSamples()),
-                                           silence.getMagnitude (1, silence.getNumSamples()));
+    const auto digitalSilence = juce::jmax (silence.getMagnitude (0, 0, silence.getNumSamples()),
+                                           silence.getMagnitude (1, 0, silence.getNumSamples()));
     if (chromeSilence != 0.0f || ethernalSilence != 0.0f || digitalSilence != 0.0f)
     {
         std::cerr << "FAIL: a reset character processor generated output from silence: "

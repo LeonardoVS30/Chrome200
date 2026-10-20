@@ -5,6 +5,7 @@ namespace chrome
 SampleData::SampleData (juce::AudioBuffer<float> audio, double sourceRate, juce::File sourceFile)
     : buffer (std::move (audio)), rate (sourceRate), source (std::move (sourceFile))
 {
+    pitch = detectPitch (buffer, rate);
     constexpr int peakCount = 1024;
     displayPeaks.resize (peakCount);
     const auto stride = juce::jmax (1, buffer.getNumSamples() / peakCount);
